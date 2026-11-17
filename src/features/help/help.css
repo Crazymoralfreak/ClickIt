@@ -1,0 +1,51 @@
+/* Help and About pages: plain selectable text. */
+
+.help-text {
+  user-select: text;
+  cursor: text;
+}
+
+.help-text + .help-text,
+.help-list + .help-text {
+  margin-top: 8px;
+}
+
+.help-subtitle {
+  font-size: 14px;
+  font-weight: 600;
+  margin-top: 10px;
+}
+
+.help-list {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  user-select: text;
+  cursor: text;
+}
+
+.help-list li + li {
+  margin-top: 3px;
+}
+
+.about-name {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.about-description {
+  color: var(--text-dim);
+  margin: 4px 0 10px;
+  user-select: text;
+  cursor: text;
+}
+
+.about-update {
+  margin-bottom: 10px;
+}
+
+.about-value {
+  user-select: text;
+  cursor: text;
+  word-break: break-all;
+}

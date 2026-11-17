@@ -1,0 +1,39 @@
+/* Journal page: newest entries first, selectable text. */
+
+.journal-note {
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  user-select: text;
+  cursor: text;
+}
+
+.journal-list {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.journal-row {
+  display: flex;
+  gap: 14px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  user-select: text;
+  cursor: text;
+}
+
+.journal-row:last-child {
+  border-bottom: 0;
+}
+
+.journal-time {
+  flex: none;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.journal-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}

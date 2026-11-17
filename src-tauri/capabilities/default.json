@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Local-only capability: core IPC, events and window dragging for the recording badge. No network, shell or file-system plugins are exposed to the web view.",
+  "windows": ["main", "badge", "region"],
+  "permissions": ["core:default", "core:window:allow-start-dragging"]
+}

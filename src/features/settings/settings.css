@@ -1,0 +1,90 @@
+/* Settings page. */
+
+.settings-hotkey {
+  width: 200px;
+  text-align: center;
+  font-weight: 600;
+  cursor: pointer;
+  caret-color: transparent;
+}
+
+.settings-hotkey-listening {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.settings-check {
+  padding: 6px 0;
+}
+
+.settings-check-hint {
+  margin: 2px 0 0 24px;
+}
+
+.settings-blocked-add {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.settings-blocked-add .input {
+  width: 240px;
+}
+
+.settings-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.settings-list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-list-row:last-child {
+  border-bottom: 0;
+}
+
+.settings-list-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+  cursor: text;
+}
+
+.settings-list-added {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.settings-empty {
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+
+.settings-text {
+  user-select: text;
+  cursor: text;
+}
+
+.settings-text + .settings-text {
+  margin-top: 8px;
+}
+
+.settings-path {
+  user-select: text;
+  cursor: text;
+  word-break: break-all;
+}

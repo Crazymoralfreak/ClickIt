@@ -1,0 +1,131 @@
+name: Release
+
+# A pushed tag "v<version>" builds the installer and the portable executable,
+# signs the installer for the updater and attaches the files and the update
+# manifest (latest.json) to the GitHub release of that tag.
+#
+# Secrets: TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD,
+# the private half of the key whose public half is in src-tauri/tauri.conf.json.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check that the tag matches the version in the project files
+        run: |
+          $tauri = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $npm = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $cargo = (Select-String -Path src-tauri/Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $expected = $env:GITHUB_REF_NAME -replace '^v', ''
+          foreach ($found in @($tauri, $npm, $cargo)) {
+            if ($found -ne $expected) {
+              throw "Tag $env:GITHUB_REF_NAME does not match the versions: tauri.conf.json $tauri, package.json $npm, Cargo.toml $cargo"
+            }
+          }
+          "VERSION=$expected" >> $env:GITHUB_ENV
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install the Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        working-directory: src-tauri
+        run: cargo test --lib
+
+      # Runs the type check and the frontend build first (beforeBuildCommand).
+      # tauri.release.conf.json turns the signing of the installer on; a local
+      # build does not use it and therefore needs no key.
+      - name: Build and sign the installer
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            throw "The secret TAURI_SIGNING_PRIVATE_KEY is not set: the installer cannot be signed"
+          }
+          npm run tauri build -- --config "$env:GITHUB_WORKSPACE/src-tauri/tauri.release.conf.json"
+          if ($LASTEXITCODE -ne 0) {
+            throw "The build failed"
+          }
+
+      - name: Attach the files to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $installerName = "ClickIt_${env:VERSION}_x64-setup.exe"
+          $installer = "src-tauri/target/release/bundle/nsis/$installerName"
+          $signatureFile = "$installer.sig"
+          $portable = "ClickIt_${env:VERSION}_x64-portable.exe"
+          if (-not (Test-Path $installer)) {
+            throw "The installer was not built: $installer"
+          }
+          if (-not (Test-Path $signatureFile)) {
+            throw "The installer was not signed: $signatureFile is missing"
+          }
+          Copy-Item src-tauri/target/release/clickit.exe $portable
+
+          # The manifest that installed copies read to find out about this version.
+          $signature = (Get-Content $signatureFile -Raw).Trim()
+          $entry = [ordered]@{
+            signature = $signature
+            url = "https://github.com/$env:GITHUB_REPOSITORY/releases/download/$tag/$installerName"
+          }
+          $manifest = [ordered]@{
+            version = $env:VERSION
+            notes = "https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$tag"
+            pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+            platforms = [ordered]@{
+              "windows-x86_64" = $entry
+              "windows-x86_64-nsis" = $entry
+            }
+          }
+          # WriteAllText writes UTF-8 without a byte order mark, which a JSON reader may reject.
+          $manifestFile = Join-Path (Get-Location) "latest.json"
+          [System.IO.File]::WriteAllText($manifestFile, ($manifest | ConvertTo-Json -Depth 5))
+
+          # A release made by hand for this tag is kept; only its files are replaced.
+          $existing = gh release list --limit 1000 --json tagName --jq '.[].tagName'
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not read the list of releases"
+          }
+          if (@($existing) -notcontains $tag) {
+            gh release create $tag --title "ClickIt $env:VERSION" --generate-notes
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not create the release $tag"
+            }
+          }
+          gh release upload $tag $installer $portable --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not upload the files to the release $tag"
+          }
+          # The manifest goes last: it must never point to an installer that is not there yet.
+          gh release upload $tag latest.json --clobber
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not upload latest.json to the release $tag"
+          }
