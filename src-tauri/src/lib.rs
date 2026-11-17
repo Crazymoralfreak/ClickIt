@@ -16,6 +16,7 @@ pub mod shell;
 pub mod storage;
 pub mod target;
 pub mod transfer;
+pub mod update;
 
 use tauri::RunEvent;
 use tauri_plugin_autostart::MacosLauncher;
@@ -37,6 +38,8 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![app::AUTOSTART_FLAG])))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
+        // Only the core talks to the updater: the web view gets no permission for it.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|setup| app::setup(setup.handle()))
         .on_window_event(app::window_event)
         .invoke_handler(tauri::generate_handler![
@@ -46,6 +49,8 @@ pub fn run() {
             commands::settings_set,
             commands::autostart_get,
             commands::autostart_set,
+            commands::update_status,
+            commands::update_check,
             commands::scenario_list,
             commands::scenario_get,
             commands::scenario_create,

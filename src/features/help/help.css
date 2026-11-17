@@ -40,6 +40,10 @@
   cursor: text;
 }
 
+.about-update {
+  margin-bottom: 10px;
+}
+
 .about-value {
   user-select: text;
   cursor: text;

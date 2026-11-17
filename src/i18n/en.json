@@ -65,7 +65,11 @@
       "startFailed": "ClickIt: run did not start",
       "runFailed": "ClickIt: run stopped",
       "recordStopped": "ClickIt: recording stopped",
-      "named": "\"{name}\": {text}"
+      "named": "\"{name}\": {text}",
+      "updateAvailable": "ClickIt: a new version is out",
+      "updateAvailableText": "Version {version} is out. Download it from the ClickIt releases page.",
+      "updateInstalling": "ClickIt is updating",
+      "updateInstallingText": "Version {version} is being installed. ClickIt will start again afterwards."
     },
     "dialog": {
       "exportTitle": "Export scenario",
@@ -80,6 +84,7 @@
     "notFound": "Scenario or queue not found",
     "nameEmpty": "The name cannot be empty",
     "busy": "A run or a recording is in progress. Stop it first.",
+    "updating": "ClickIt is installing an update and is about to restart",
     "invalid": "The scenario has errors. Fix the steps marked in red.",
     "queueInvalid": "The queue has errors. Remove or replace the marked items.",
     "nothingToRun": "No scenario or queue is selected to run",
@@ -163,7 +168,10 @@
       "queueItemFailed": "Queue \"{queue}\": item \"{name}\" failed: {reason}",
       "recordStart": "Recording into \"{name}\" started",
       "recordEnd": "Recording into \"{name}\" stopped, steps added: {added} ({reason})",
-      "recordSaveFailed": "Recorded steps were not saved into \"{name}\": {reason}"
+      "recordSaveFailed": "Recorded steps were not saved into \"{name}\": {reason}",
+      "updateFound": "A new version {version} was found",
+      "updateInstall": "Version {version} is being installed, ClickIt is restarting",
+      "updateFailed": "Version {version} was not installed: {message}"
     },
     "sources": {
       "manual": "manual",
@@ -560,6 +568,8 @@
     "closeExitsHint": "When this is off, closing the window hides it to the tray and ClickIt keeps running.",
     "catchUp": "Catch up a missed daily or weekly start after ClickIt is launched",
     "catchUpHint": "The start is run once, and only if less than 12 hours have passed since the missed time.",
+    "checkUpdates": "Check for updates at startup",
+    "checkUpdatesHint": "ClickIt asks GitHub whether a new version is out. An update that is found is downloaded and installed by itself when no run or recording is in progress; ClickIt starts again afterwards. With the box unticked the application does not use the network on its own.",
     "blocked": "Do not run while running",
     "blockedPlaceholder": "game.exe",
     "blockedNameLabel": "Name of the executable file",
@@ -652,6 +662,14 @@
       "tray": "When its window is closed, ClickIt stays in the tray unless the settings say otherwise. The tray icon menu opens the window, starts a scenario or a queue, stops a run and quits.",
       "schedule": "The schedule starts scenarios and queues at a set time while ClickIt is running. Such a start has no countdown. See the \"Schedule\" page for details."
     },
+    "updates": {
+      "title": "Updates",
+      "check": "At startup ClickIt asks GitHub whether a new version is out. This is the only time the application uses the network; the check can be turned off in the settings.",
+      "install": "An update that is found is downloaded, its signature is checked, and it is installed by itself. ClickIt starts again afterwards.",
+      "idle": "An update does not interrupt a run or a recording: it waits for them to end.",
+      "portable": "A copy that runs without installation does not update itself and only tells about the new version.",
+      "manual": "Updates can be checked by hand on the \"About\" page."
+    },
     "blocked": {
       "title": "The \"Do not run while running\" list",
       "text": "In the settings you can list programs by the name of their executable file. While at least one of them is running, a scenario does not start and a running one pauses. An empty list blocks nothing."
@@ -670,7 +688,21 @@
     "version": "Version",
     "dataDir": "Data folder",
     "repository": "Repository",
-    "offline": "The application works offline. It has no account, no cloud and no auto-update."
+    "network": "The application has no account and no cloud. It uses the network only for updates, from GitHub: at startup, if the settings allow it, and when you press \"Check for updates\"."
+  },
+  "update": {
+    "title": "Updates",
+    "check": "Check for updates",
+    "idle": "Updates have not been checked in this session yet.",
+    "checking": "Checking…",
+    "upToDate": "The latest version is installed.",
+    "available": "Version {version} is out. This copy runs without installation and cannot update itself. The new version is here: {url}",
+    "downloading": "Downloading version {version}…",
+    "ready": "Version {version} is downloaded. It will be installed when the run or the recording ends.",
+    "installing": "Version {version} is being installed. ClickIt is about to restart.",
+    "failed": "The check for updates failed. There may be no internet connection.",
+    "failedVersion": "Version {version} could not be installed. The reason is in the journal.",
+    "toastAvailable": "Version {version} is out. See the \"About\" page for details."
   },
   "overlay": {
     "badgeStop": "Stop",

@@ -215,6 +215,34 @@ pub struct WindowInfo {
     pub process: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdateState {
+    /// Nothing was checked in this session yet.
+    #[default]
+    Idle,
+    Checking,
+    UpToDate,
+    /// A newer version exists, but this copy cannot install it by itself.
+    Available,
+    Downloading,
+    /// Downloaded; the installation waits for a run or a recording to end.
+    Ready,
+    Installing,
+    Failed,
+}
+
+/// Payload of the `update:status` event and of the `update_status` command.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateStatus {
+    pub state: UpdateState,
+    /// The newer version, once one is found.
+    pub version: Option<String>,
+    /// True for a copy that was not put in place by the installer.
+    pub portable: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DataKind {

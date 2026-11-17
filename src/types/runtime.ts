@@ -120,3 +120,24 @@ export interface WindowInfo {
 }
 
 export type DataKind = "scenarios" | "queues" | "schedule" | "settings";
+
+export type UpdateState =
+  /** Nothing was checked in this session yet. */
+  | "idle"
+  | "checking"
+  | "upToDate"
+  /** A newer version exists, but this copy cannot install it by itself. */
+  | "available"
+  | "downloading"
+  /** Downloaded; the installation waits for a run or a recording to end. */
+  | "ready"
+  | "installing"
+  | "failed";
+
+export interface UpdateStatus {
+  state: UpdateState;
+  /** The newer version, once one is found. */
+  version: string | null;
+  /** True for a copy that was not put in place by the installer. */
+  portable: boolean;
+}

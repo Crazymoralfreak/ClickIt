@@ -124,6 +124,16 @@ const TOPICS: ReadonlyArray<HelpTopic> = [
     ],
   },
   {
+    title: "help.updates.title",
+    parts: [
+      { kind: "text", text: "help.updates.check" },
+      { kind: "text", text: "help.updates.install" },
+      { kind: "text", text: "help.updates.idle" },
+      { kind: "text", text: "help.updates.portable" },
+      { kind: "text", text: "help.updates.manual" },
+    ],
+  },
+  {
     title: "help.blocked.title",
     parts: [{ kind: "text", text: "help.blocked.text" }],
   },

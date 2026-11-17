@@ -1,7 +1,7 @@
 // App-wide state shared by every screen of the main window.
 
 import { createContext, useContext } from "react";
-import type { AppInfo, DataKind, RunStatus } from "../types/runtime";
+import type { AppInfo, DataKind, RunStatus, UpdateStatus } from "../types/runtime";
 import type { RunTarget, Settings } from "../types/scenario";
 
 export type Page = "scenarios" | "queues" | "schedule" | "settings" | "journal" | "help" | "about";
@@ -32,6 +32,9 @@ export interface AppContextValue {
   /** Saves pending edits, optionally makes `target` the current one, then starts it. */
   start: (target?: RunTarget) => Promise<void>;
   stop: () => Promise<void>;
+
+  /** What is known about a newer version in this session. */
+  update: UpdateStatus;
 
   page: Page;
   navigate: (page: Page) => void;

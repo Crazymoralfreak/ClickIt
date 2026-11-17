@@ -8,6 +8,7 @@ import type {
   JournalEntry,
   RegionPurpose,
   RunStatus,
+  UpdateStatus,
   WindowInfo,
 } from "../types/runtime";
 import type {
@@ -42,6 +43,10 @@ export const api = {
   settingsSet: (settings: Settings) => invoke<Settings>("settings_set", { settings }),
   autostartGet: () => invoke<boolean>("autostart_get"),
   autostartSet: (enabled: boolean) => invoke<void>("autostart_set", { enabled }),
+
+  updateStatus: () => invoke<UpdateStatus>("update_status"),
+  /** Starts a check for updates; the progress arrives as `update:status` events. */
+  updateCheck: () => invoke<void>("update_check"),
 
   scenarioList: () => invoke<ScenarioSummary[]>("scenario_list"),
   scenarioGet: (id: string) => invoke<Scenario>("scenario_get", { id }),

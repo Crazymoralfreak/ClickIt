@@ -9,6 +9,7 @@ import type {
   RegionResult,
   RunFinished,
   RunStatus,
+  UpdateStatus,
 } from "../types/runtime";
 
 export interface AppEvents {
@@ -22,6 +23,8 @@ export interface AppEvents {
   /** Data changed outside the main window: recording, import, tray. */
   "data:changed": { kind: DataKind };
   "journal:changed": null;
+  /** Every step of a check for updates and of the installation of one. */
+  "update:status": UpdateStatus;
 }
 
 export type AppEventName = keyof AppEvents;

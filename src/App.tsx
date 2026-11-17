@@ -17,7 +17,7 @@ import { ScenariosPage } from "./features/scenarios/ScenariosPage";
 import { SchedulePage } from "./features/schedule/SchedulePage";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { I18nProvider, translate, useT, type TKey } from "./i18n";
-import type { AppError, AppInfo, DataKind, RunStatus } from "./types/runtime";
+import type { AppError, AppInfo, DataKind, RunStatus, UpdateStatus } from "./types/runtime";
 import type { Language, RunTarget, Settings } from "./types/scenario";
 import { Button, Modal, TextInput, cx } from "./ui";
 
@@ -25,6 +25,7 @@ interface Boot {
   info: AppInfo;
   settings: Settings;
   status: RunStatus;
+  update: UpdateStatus;
 }
 
 export function App() {
@@ -32,8 +33,8 @@ export function App() {
   const [failure, setFailure] = useState<AppError | null>(null);
 
   useEffect(() => {
-    Promise.all([api.appInfo(), api.settingsGet(), api.runStatus()])
-      .then(([info, settings, status]) => setBoot({ info, settings, status }))
+    Promise.all([api.appInfo(), api.settingsGet(), api.runStatus(), api.updateStatus()])
+      .then(([info, settings, status, update]) => setBoot({ info, settings, status, update }))
       .catch((error: unknown) => setFailure(toAppError(error)));
   }, []);
 
@@ -72,6 +73,7 @@ const NAV: ReadonlyArray<{ page: Page; label: TKey }> = [
 function MainWindow({ boot }: { boot: Boot }) {
   const [settings, setSettings] = useState(boot.settings);
   const [status, setStatus] = useState(boot.status);
+  const [update, setUpdate] = useState(boot.update);
   const [page, setPage] = useState<Page>("scenarios");
   const [selectedScenarioId, setSelectedScenarioId] = useState<string | null>(
     boot.settings.current?.kind === "scenario" ? boot.settings.current.id : null,
@@ -246,6 +248,33 @@ function MainWindow({ boot }: { boot: Boot }) {
     }
   });
 
+  useAppEvent("update:status", (next) => {
+    const lang = languageRef.current;
+    const version = next.version ?? "";
+    setUpdate(next);
+    switch (next.state) {
+      case "available":
+        notify(translate(lang, "update.toastAvailable", { version }));
+        break;
+      case "installing":
+        // The process ends in a moment: whatever is being edited must reach the disk first.
+        void flushAll().catch(showError);
+        notify(translate(lang, "update.installing", { version }));
+        break;
+      case "idle":
+      case "checking":
+      case "upToDate":
+      case "downloading":
+      case "ready":
+      case "failed":
+        break;
+      default: {
+        const unreachable: never = next.state;
+        throw new Error(`Unknown update state: ${String(unreachable)}`);
+      }
+    }
+  });
+
   useAppEvent("data:changed", ({ kind }) => {
     touch(kind);
     if (kind === "settings") {
@@ -268,6 +297,7 @@ function MainWindow({ boot }: { boot: Boot }) {
       locked: status.state !== "idle",
       start,
       stop,
+      update,
       page,
       navigate: setPage,
       selectedScenarioId,
@@ -290,6 +320,7 @@ function MainWindow({ boot }: { boot: Boot }) {
       status,
       start,
       stop,
+      update,
       page,
       selectedScenarioId,
       selectedQueueId,

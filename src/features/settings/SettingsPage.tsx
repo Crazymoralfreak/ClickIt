@@ -159,6 +159,12 @@ export function SettingsPage() {
           hint={t("settings.catchUpHint")}
           onChange={(catchUp) => void saveSettings({ ...settings, catchUp })}
         />
+        <CheckRow
+          checked={settings.checkUpdates}
+          label={t("settings.checkUpdates")}
+          hint={t("settings.checkUpdatesHint")}
+          onChange={(checkUpdates) => void saveSettings({ ...settings, checkUpdates })}
+        />
       </Section>
 
       <Section title={t("settings.blocked")}>

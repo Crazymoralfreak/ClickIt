@@ -26,6 +26,13 @@
       "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRGN0EzNEY2RDQ3RDUzNjQKUldSa1UzM1U5alI2VHcrSlVYV2JyK0s0YjVNcER3WXZoSzF1YjJPRWd1YVZ2L0VGWG8xb1Q5ZTcK",
+      "endpoints": ["https://github.com/Crazymoralfreak/ClickIt/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],

@@ -15,10 +15,11 @@ use crate::model::scenario::{new_id, Scenario, WindowTarget, SCENARIO_VERSION};
 use crate::model::schedule::{RunTarget, ScheduleRule};
 use crate::model::settings::Settings;
 use crate::model::validate::{validate_queue, validate_scenario, Issue};
-use crate::runtime::{AppInfo, JournalEntry, RegionPurpose, RunStatus, WindowInfo};
+use crate::runtime::{AppInfo, JournalEntry, RegionPurpose, RunStatus, UpdateStatus, WindowInfo};
 use crate::screen;
 use crate::storage::{QueueSummary, ScenarioSummary};
 use crate::target;
+use crate::update;
 
 type CoreState<'a> = State<'a, Arc<Core>>;
 
@@ -61,6 +62,19 @@ pub fn autostart_get(core: CoreState<'_>) -> AppResult<bool> {
 #[tauri::command(async)]
 pub fn autostart_set(core: CoreState<'_>, enabled: bool) -> AppResult<()> {
     core.set_autostart(enabled)
+}
+
+// Updates
+
+#[tauri::command(async)]
+pub fn update_status(core: CoreState<'_>) -> UpdateStatus {
+    core.updates.status()
+}
+
+/// Starts a check in the background; the progress arrives as `update:status` events.
+#[tauri::command(async)]
+pub fn update_check(core: CoreState<'_>) {
+    update::check_now(core.inner());
 }
 
 // Scenarios

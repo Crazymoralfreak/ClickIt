@@ -41,6 +41,7 @@ use crate::shell::{notify, window};
 use crate::storage::Store;
 use crate::target;
 use crate::transfer;
+use crate::update::{self, Tracker};
 
 /// Passed by the autostart entry: start in the tray, without the window.
 pub const AUTOSTART_FLAG: &str = "--autostart";
@@ -84,6 +85,7 @@ pub struct Core {
     pub engine: Arc<Engine>,
     pub recorder: Arc<Recorder>,
     pub scheduler: Scheduler,
+    pub updates: Tracker,
     settings: Mutex<Settings>,
     /// The start/stop hotkey as registered with Windows.
     start_stop: Mutex<Option<Hotkey>>,
@@ -92,6 +94,8 @@ pub struct Core {
     /// Starts go one at a time, so that two of them cannot both see "idle".
     start_lock: Mutex<()>,
     quitting: AtomicBool,
+    /// An update is being installed: nothing new starts, the process is about to end.
+    updating: AtomicBool,
     tray: Mutex<TrayShown>,
 }
 
@@ -251,16 +255,22 @@ impl Core {
             engine,
             recorder,
             scheduler,
+            updates: Tracker::new(),
             settings: Mutex::new(settings),
             start_stop: Mutex::new(None),
             capture: Mutex::new(None),
             region: Mutex::new(None),
             start_lock: Mutex::new(()),
             quitting: AtomicBool::new(false),
+            updating: AtomicBool::new(false),
             tray: Mutex::new(TrayShown::default()),
         });
         app.manage(Arc::clone(&core));
         Ok(core)
+    }
+
+    pub(crate) fn app(&self) -> &AppHandle {
+        &self.app
     }
 
     pub fn info(&self) -> AppInfo {
@@ -277,7 +287,7 @@ impl Core {
         lock(&self.settings).clone()
     }
 
-    fn lang(&self) -> String {
+    pub(crate) fn lang(&self) -> String {
         lock(&self.settings).lang().to_string()
     }
 
@@ -429,11 +439,36 @@ impl Core {
     }
 
     fn ensure_idle(&self) -> AppResult<()> {
-        if self.engine.is_running() || self.recorder.is_active() || lock(&self.region).is_some() {
+        if self.updating.load(Ordering::SeqCst) {
+            Err(AppError::new("updating"))
+        } else if self.engine.is_running() || self.recorder.is_active() || lock(&self.region).is_some() {
             Err(AppError::new("busy"))
         } else {
             Ok(())
         }
+    }
+
+    // Updates
+
+    pub(crate) fn is_quitting(&self) -> bool {
+        self.quitting.load(Ordering::SeqCst)
+    }
+
+    /// Claims the application for the installer of an update. Succeeds only
+    /// when nothing is running, being recorded or being selected on the
+    /// screen; from then on nothing new starts.
+    pub(crate) fn begin_install(&self) -> bool {
+        let _starting = lock(&self.start_lock);
+        if self.ensure_idle().is_err() || lock(&self.capture).is_some() {
+            return false;
+        }
+        self.updating.store(true, Ordering::SeqCst);
+        true
+    }
+
+    /// The installer could not be started: ClickIt goes on as before.
+    pub(crate) fn cancel_install(&self) {
+        self.updating.store(false, Ordering::SeqCst);
     }
 
     /// Starts a scenario or a queue. A start that did not happen is written to
@@ -793,6 +828,7 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     if !std::env::args().any(|arg| arg == AUTOSTART_FLAG) {
         window::show_main(app);
     }
+    update::check_at_startup(&core);
     Ok(())
 }
 

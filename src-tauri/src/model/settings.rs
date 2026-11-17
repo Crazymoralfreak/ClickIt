@@ -24,6 +24,9 @@ pub struct Settings {
     pub close_exits: bool,
     /// Run a missed daily or weekly slot once after startup.
     pub catch_up: bool,
+    /// Ask GitHub for a newer version at startup. This is the only network
+    /// access of the application; with it off ClickIt stays offline.
+    pub check_updates: bool,
     /// What Start, the hotkey and the tray "Start" item run.
     pub current: Option<RunTarget>,
 }
@@ -39,6 +42,7 @@ impl Default for Settings {
             blocked_processes: Vec::new(),
             close_exits: false,
             catch_up: true,
+            check_updates: true,
             current: None,
         }
     }

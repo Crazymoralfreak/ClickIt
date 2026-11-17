@@ -271,6 +271,8 @@ export interface Settings {
   blockedProcesses: string[];
   closeExits: boolean;
   catchUp: boolean;
+  /** Ask GitHub for a newer version at startup; the only network access of the application. */
+  checkUpdates: boolean;
   /** What Start, the hotkey and the tray "Start" item run. */
   current: RunTarget | null;
 }
