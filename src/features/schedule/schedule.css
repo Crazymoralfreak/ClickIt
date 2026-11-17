@@ -1,0 +1,88 @@
+/* Schedule page: one card per rule, notes at the bottom. */
+
+.schedule-rule {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 16px;
+  margin-bottom: 12px;
+}
+
+.schedule-rule-invalid {
+  border-color: var(--danger);
+}
+
+.schedule-rule-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.schedule-rule .select {
+  max-width: 100%;
+}
+
+.schedule-word {
+  color: var(--text-dim);
+}
+
+.schedule-days {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.schedule-days-invalid {
+  border-color: var(--danger);
+}
+
+.schedule-day {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 0;
+  border-right: 1px solid var(--border);
+  padding: 5px 9px;
+  cursor: pointer;
+}
+
+.schedule-day:last-child {
+  border-right: 0;
+}
+
+.schedule-day:hover {
+  background: var(--surface-2);
+}
+
+.schedule-day-on,
+.schedule-day-on:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.schedule-note {
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.schedule-warning {
+  background: var(--danger-soft);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.schedule-notes {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+}
+
+.schedule-notes li + li {
+  margin-top: 4px;
+}
