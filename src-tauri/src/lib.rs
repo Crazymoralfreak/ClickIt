@@ -1,10 +1,13 @@
 //! ClickIt: a desktop auto clicker for Windows. The web view draws the
 //! interface, everything else lives here.
 
+pub mod agent;
 pub mod app;
 pub mod commands;
 pub mod engine;
+pub mod external;
 pub mod error;
+pub mod harness;
 pub mod input;
 pub mod journal;
 pub mod model;
@@ -51,6 +54,14 @@ pub fn run() {
             commands::autostart_set,
             commands::update_status,
             commands::update_check,
+            commands::harness_reply,
+            commands::window_show,
+            commands::agent_info,
+            commands::agent_key_set,
+            commands::agent_history,
+            commands::agent_send,
+            commands::harness_dialogs,
+            commands::harness_mcp_snippet,
             commands::scenario_list,
             commands::scenario_get,
             commands::scenario_create,

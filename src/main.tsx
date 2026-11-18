@@ -2,16 +2,19 @@ import { StrictMode, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { BadgeApp } from "./features/overlays/BadgeApp";
+import { HudApp } from "./features/overlays/HudApp";
 import { RegionApp } from "./features/overlays/RegionApp";
 import "./styles.css";
 
-type View = "main" | "badge" | "region";
+type View = "main" | "badge" | "region" | "hud";
 
 /** The badge and the region overlay are separate windows on the same page, told apart by the hash. */
 function currentView(): View {
   switch (window.location.hash) {
     case "#badge":
       return "badge";
+    case "#hud":
+      return "hud";
     case "#region":
       return "region";
     default:
@@ -25,6 +28,8 @@ function render(view: View): ReactNode {
       return <App />;
     case "badge":
       return <BadgeApp />;
+    case "hud":
+      return <HudApp />;
     case "region":
       return <RegionApp />;
     default: {

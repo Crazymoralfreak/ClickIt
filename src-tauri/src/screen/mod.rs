@@ -2,7 +2,9 @@
 //! Capture goes through GDI `BitBlt`; matching is done in our own memory.
 
 use std::mem::size_of;
+use std::ops::Range;
 use std::path::Path;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::thread;
 
 use base64::engine::general_purpose::STANDARD;
@@ -21,6 +23,9 @@ use crate::runtime::Rect;
 
 /// Searches with more positions than this are split between threads.
 const PARALLEL_FROM_POSITIONS: usize = 400_000;
+/// A search never wakes more cores than this. Every extra core shows up in the
+/// CPU column even when the same work would finish quickly on one or two.
+const MAX_SEARCH_THREADS: usize = 2;
 /// Around the first match, the best position within this many pixels is taken.
 const REFINE_RADIUS: i32 = 2;
 
@@ -42,14 +47,53 @@ impl Frame {
     }
 
     pub fn save_png(&self, path: &Path) -> AppResult<()> {
+        std::fs::write(path, self.to_png()?).map_err(|error| AppError::new("io").with("message", error))
+    }
+
+    pub fn to_png(&self) -> AppResult<Vec<u8>> {
+        encode_png(&self.to_rgba()?)
+    }
+
+    /// A smaller PNG for a model, and the factor that turns a pixel of that PNG
+    /// back into a pixel of this frame: `frame = origin + preview * scale`.
+    pub fn preview_png(&self, max_side: u32) -> AppResult<(Vec<u8>, f64)> {
+        let image = self.to_rgba()?;
+        let (width, height, scale) = preview_size(image.width(), image.height(), max_side);
+        if scale == 1.0 {
+            return Ok((encode_png(&image)?, scale));
+        }
+        let scaled = image::imageops::resize(&image, width, height, image::imageops::FilterType::Triangle);
+        Ok((encode_png(&scaled)?, scale))
+    }
+
+    fn to_rgba(&self) -> AppResult<RgbaImage> {
         let mut rgba = Vec::with_capacity(self.data.len());
         for pixel in self.data.chunks_exact(4) {
             rgba.extend_from_slice(&[pixel[2], pixel[1], pixel[0], 255]);
         }
-        let image = RgbaImage::from_raw(self.rect.width as u32, self.rect.height as u32, rgba)
-            .ok_or_else(|| AppError::new("captureFailed"))?;
-        image.save(path).map_err(|error| AppError::new("io").with("message", error))
+        RgbaImage::from_raw(self.rect.width as u32, self.rect.height as u32, rgba)
+            .ok_or_else(|| AppError::new("captureFailed"))
     }
+}
+
+fn encode_png(image: &RgbaImage) -> AppResult<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let encoder = image::codecs::png::PngEncoder::new(&mut bytes);
+    image.write_with_encoder(encoder).map_err(|_| AppError::new("captureFailed"))?;
+    Ok(bytes)
+}
+
+/// Size of a preview whose longer side is at most `max_side`, and the scale
+/// a caller multiplies preview coordinates by. `scale` is 1 when nothing shrinks.
+pub fn preview_size(width: u32, height: u32, max_side: u32) -> (u32, u32, f64) {
+    let long = width.max(height);
+    if long == 0 || long <= max_side || max_side == 0 {
+        return (width.max(1), height.max(1), 1.0);
+    }
+    let scale = f64::from(long) / f64::from(max_side);
+    let preview_width = (f64::from(width) / scale).round().max(1.0) as u32;
+    let preview_height = (f64::from(height) / scale).round().max(1.0) as u32;
+    (preview_width, preview_height, scale)
 }
 
 /// `#RRGGBB` text of a colour.
@@ -236,10 +280,158 @@ impl Matcher<'_> {
     }
 
     /// First match in rows `rows`, scanning left to right, top to bottom.
-    fn first_in_rows(&self, rows: std::ops::Range<i32>, last_left: i32) -> Option<(i32, i32)> {
-        rows.flat_map(|top| (0..=last_left).map(move |left| (left, top)))
-            .find(|&(left, top)| self.score(left, top).is_some())
+    /// Rows at or below `stop_below` are left alone: another worker already
+    /// found a match higher up.
+    fn first_in_rows(&self, rows: Range<i32>, last_left: i32, stop_below: &AtomicI32) -> Option<(i32, i32)> {
+        for top in rows {
+            if top >= stop_below.load(Ordering::Relaxed) {
+                return None;
+            }
+            for left in 0..=last_left {
+                if self.score(left, top).is_some() {
+                    stop_below.fetch_min(top, Ordering::Relaxed);
+                    return Some((left, top));
+                }
+            }
+        }
+        None
     }
+}
+
+/// Sums of `k` by `k` pixel blocks of the template. Compared with the same
+/// squares of the frame, the absolute difference of the sums is at most the
+/// real channel difference inside the square.
+struct Blocks {
+    width: i32,
+    height: i32,
+    sums: Vec<[u32; 3]>,
+}
+
+/// Exclusive prefix sums, so any rectangle is four lookups.
+struct Integral {
+    stride: usize,
+    values: Vec<[u64; 3]>,
+}
+
+/// Exclusive prefix sums of horizontal colour changes. A window whose sum is
+/// `g` cannot lose more than `g` of difference when it shifts one pixel right.
+struct Gradient {
+    stride: usize,
+    values: Vec<u64>,
+}
+
+fn coarse_scale(width: i32, height: i32) -> Option<i32> {
+    [32, 16, 8, 4, 2].into_iter().find(|&scale| width / scale >= 2 && height / scale >= 2)
+}
+
+fn blocks_of_template(template: &Template, scale: i32) -> Blocks {
+    let width = template.width / scale;
+    let height = template.height / scale;
+    let mut sums = vec![[0u32; 3]; (width * height) as usize];
+    let stride = template.width as usize;
+    for by in 0..height {
+        for bx in 0..width {
+            let mut sum = [0u32; 3];
+            let x0 = bx * scale;
+            let y0 = by * scale;
+            for dy in 0..scale {
+                let row = (y0 + dy) as usize * stride + x0 as usize;
+                for dx in 0..scale {
+                    let pixel = &template.data[(row + dx as usize) * 3..];
+                    sum[0] += u32::from(pixel[0]);
+                    sum[1] += u32::from(pixel[1]);
+                    sum[2] += u32::from(pixel[2]);
+                }
+            }
+            sums[(by * width + bx) as usize] = sum;
+        }
+    }
+    Blocks { width, height, sums }
+}
+
+impl Integral {
+    fn from_frame(frame: &Frame) -> Self {
+        let width = frame.rect.width as usize;
+        let height = frame.rect.height as usize;
+        let stride = width + 1;
+        let mut values = vec![[0u64; 3]; stride * (height + 1)];
+        for y in 0..height {
+            let mut run = [0u64; 3];
+            for x in 0..width {
+                let pixel = &frame.data[(y * width + x) * 4..];
+                run[0] += u64::from(pixel[2]);
+                run[1] += u64::from(pixel[1]);
+                run[2] += u64::from(pixel[0]);
+                let here = (y + 1) * stride + x + 1;
+                let above = y * stride + x + 1;
+                values[here] = [values[above][0] + run[0], values[above][1] + run[1], values[above][2] + run[2]];
+            }
+        }
+        Self { stride, values }
+    }
+
+    fn rect(&self, x: i32, y: i32, width: i32, height: i32) -> [u64; 3] {
+        let stride = self.stride;
+        let at = |x: i32, y: i32| self.values[y as usize * stride + x as usize];
+        let x1 = x + width;
+        let y1 = y + height;
+        let (a, b, c, d) = (at(x, y), at(x1, y), at(x, y1), at(x1, y1));
+        [d[0] + a[0] - b[0] - c[0], d[1] + a[1] - b[1] - c[1], d[2] + a[2] - b[2] - c[2]]
+    }
+}
+
+impl Gradient {
+    fn from_frame(frame: &Frame) -> Self {
+        let width = frame.rect.width as usize;
+        let height = frame.rect.height as usize;
+        let stride = width + 1;
+        let mut values = vec![0u64; stride * (height + 1)];
+        for y in 0..height {
+            let mut run = 0u64;
+            for x in 0..width {
+                if x + 1 < width {
+                    let left = &frame.data[(y * width + x) * 4..];
+                    let right = &frame.data[(y * width + x + 1) * 4..];
+                    run += u64::from(left[2].abs_diff(right[2]));
+                    run += u64::from(left[1].abs_diff(right[1]));
+                    run += u64::from(left[0].abs_diff(right[0]));
+                }
+                let here = (y + 1) * stride + x + 1;
+                values[here] = values[y * stride + x + 1] + run;
+            }
+        }
+        Self { stride, values }
+    }
+
+    /// Upper bound on how much a template placed at `(left, top)` can lose by moving one pixel right.
+    fn shift(&self, left: i32, top: i32, width: i32, height: i32) -> u64 {
+        let stride = self.stride;
+        let at = |x: i32, y: i32| self.values[y as usize * stride + x as usize];
+        let x1 = left + width;
+        let y1 = top + height;
+        at(x1, y1) + at(left, top) - at(x1, top) - at(left, y1)
+    }
+}
+
+fn block_delta(frame: [u64; 3], template: [u32; 3]) -> u64 {
+    frame[0].abs_diff(u64::from(template[0]))
+        + frame[1].abs_diff(u64::from(template[1]))
+        + frame[2].abs_diff(u64::from(template[2]))
+}
+
+/// Lower bound of the real difference for the whole blocks of `template` placed at `(left, top)`.
+fn window_bound(frame: &Integral, template: &Blocks, left: i32, top: i32, scale: i32, budget: u64) -> u64 {
+    let mut sum = 0u64;
+    for ty in 0..template.height {
+        for tx in 0..template.width {
+            let square = frame.rect(left + tx * scale, top + ty * scale, scale, scale);
+            sum += block_delta(square, template.sums[(ty * template.width + tx) as usize]);
+            if sum > budget {
+                return sum;
+            }
+        }
+    }
+    sum
 }
 
 /// A grid of up to 5x5 points spread over the template.
@@ -263,27 +455,7 @@ pub fn find_template(frame: &Frame, template: &Template, threshold: f64) -> Opti
         return None;
     }
     let matcher = Matcher::new(frame, template, threshold);
-    let rows = last_top + 1;
-    let positions = rows as usize * (last_left as usize + 1);
-    let workers = thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(rows as usize);
-
-    let first = if positions < PARALLEL_FROM_POSITIONS || workers < 2 {
-        matcher.first_in_rows(0..rows, last_left)
-    } else {
-        let chunk = (rows as usize).div_ceil(workers) as i32;
-        thread::scope(|scope| {
-            let handles: Vec<_> = (0..workers as i32)
-                .map(|worker| {
-                    let range = (worker * chunk)..((worker + 1) * chunk).min(rows);
-                    let matcher = &matcher;
-                    scope.spawn(move || matcher.first_in_rows(range, last_left))
-                })
-                .collect();
-            // Chunks are in row order, so the first chunk with a match holds the topmost one.
-            handles.into_iter().filter_map(|handle| handle.join().ok().flatten()).next()
-        })
-    }?;
-
+    let first = find_first(&matcher, last_left, last_top)?;
     let mut best = (first, matcher.score(first.0, first.1)?);
     for top in (first.1 - REFINE_RADIUS).max(0)..=(first.1 + REFINE_RADIUS).min(last_top) {
         for left in (first.0 - REFINE_RADIUS).max(0)..=(first.0 + REFINE_RADIUS).min(last_left) {
@@ -295,6 +467,73 @@ pub fn find_template(frame: &Frame, template: &Template, threshold: f64) -> Opti
         }
     }
     Some(best.0)
+}
+
+fn find_first(matcher: &Matcher, last_left: i32, last_top: i32) -> Option<(i32, i32)> {
+    if let Some(scale) = coarse_scale(matcher.template.width, matcher.template.height) {
+        find_first_coarse(matcher, last_left, last_top, scale)
+    } else {
+        find_first_direct(matcher, last_left, last_top)
+    }
+}
+
+/// Rejects positions from block sums, then checks a survivor pixel by pixel.
+/// A rejected place is skipped across a flat stretch: shifting the window
+/// there cannot create a match. One thread does the whole pass.
+fn find_first_coarse(matcher: &Matcher, last_left: i32, last_top: i32, scale: i32) -> Option<(i32, i32)> {
+    let template = blocks_of_template(matcher.template, scale);
+    let sums = Integral::from_frame(matcher.frame);
+    let gradient = Gradient::from_frame(matcher.frame);
+    let budget = matcher.full_budget;
+    let width = matcher.template.width;
+    let height = matcher.template.height;
+    for top in 0..=last_top {
+        let mut left = 0;
+        while left <= last_left {
+            let bound = window_bound(&sums, &template, left, top, scale, budget);
+            if bound <= budget && matcher.score(left, top).is_some() {
+                return Some((left, top));
+            }
+            if bound > budget {
+                let mut excess = bound - budget;
+                while left < last_left {
+                    let shift = gradient.shift(left, top, width, height);
+                    if shift >= excess {
+                        break;
+                    }
+                    excess -= shift;
+                    left += 1;
+                }
+            }
+            left += 1;
+        }
+    }
+    None
+}
+
+fn find_first_direct(matcher: &Matcher, last_left: i32, last_top: i32) -> Option<(i32, i32)> {
+    let rows = last_top + 1;
+    let positions = rows as usize * (last_left as usize + 1);
+    let workers = thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
+        .min(MAX_SEARCH_THREADS)
+        .min(rows as usize);
+    let stop_below = AtomicI32::new(i32::MAX);
+    if positions < PARALLEL_FROM_POSITIONS || workers < 2 {
+        return matcher.first_in_rows(0..rows, last_left, &stop_below);
+    }
+    let chunk = (rows as usize).div_ceil(workers) as i32;
+    thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers as i32)
+            .map(|worker| {
+                let range = (worker * chunk)..((worker + 1) * chunk).min(rows);
+                scope.spawn(|| matcher.first_in_rows(range, last_left, &stop_below))
+            })
+            .collect();
+        // Chunks are in row order, so the first chunk with a match holds the topmost one.
+        handles.into_iter().filter_map(|handle| handle.join().ok().flatten()).next()
+    })
 }
 
 /// Reads a PNG into a data URL for the preview in the editor.
@@ -361,6 +600,86 @@ mod tests {
         let frame = frame_of(10, 10, &pixels);
         let big = Template { width: 11, height: 4, data: vec![0; 11 * 4 * 3] };
         assert_eq!(find_template(&frame, &big, 0.5), None);
+    }
+
+    #[test]
+    fn block_bound_stays_under_the_real_difference() {
+        let pixels = noise(48, 36, 5);
+        let frame = frame_of(48, 36, &pixels);
+        let template = cut(&pixels, 48, Rect { x: 3, y: 7, width: 16, height: 16 });
+        let scale = 4;
+        let blocks = blocks_of_template(&template, scale);
+        let sums = Integral::from_frame(&frame);
+        let bound = window_bound(&sums, &blocks, 3, 7, scale, u64::MAX);
+        let mut real = 0u64;
+        for y in 0..template.height {
+            for x in 0..template.width {
+                let pixel = pixels[((7 + y) * 48 + 3 + x) as usize];
+                let sample = &template.data[((y * template.width + x) * 3) as usize..];
+                real += u64::from(pixel.0.abs_diff(sample[0]));
+                real += u64::from(pixel.1.abs_diff(sample[1]));
+                real += u64::from(pixel.2.abs_diff(sample[2]));
+            }
+        }
+        assert!(bound <= real);
+        assert_eq!(bound, 0);
+    }
+
+    #[test]
+    fn the_upper_of_two_copies_is_the_one_found() {
+        let mut pixels = noise(90, 80, 4);
+        let patch = Rect { x: 6, y: 40, width: 16, height: 16 };
+        for dy in 0..patch.height {
+            for dx in 0..patch.width {
+                let pixel = pixels[((patch.y + dy) * 90 + patch.x + dx) as usize];
+                pixels[((9 + dy) * 90 + 6 + dx) as usize] = pixel;
+            }
+        }
+        let frame = frame_of(90, 80, &pixels);
+        let template = cut(&pixels, 90, patch);
+        assert_eq!(find_template(&frame, &template, 1.0), Some((6, 9)));
+    }
+
+    #[test]
+    fn a_button_past_a_flat_area_is_not_skipped() {
+        let width = 400;
+        let height = 200;
+        let mut pixels = vec![(20u8, 40, 70); (width * height) as usize];
+        let (origin_x, origin_y, side) = (250, 80, 32);
+        for y in 0..side {
+            for x in 0..side {
+                pixels[((origin_y + y) * width + origin_x + x) as usize] = ((x * 3) as u8, (y * 5) as u8, 200);
+            }
+        }
+        let frame = frame_of(width, height, &pixels);
+        let template = cut(&pixels, width, Rect { x: origin_x, y: origin_y, width: side, height: side });
+        assert_eq!(find_template(&frame, &template, 1.0), Some((origin_x, origin_y)));
+    }
+
+    #[test]
+    fn a_missing_button_on_a_large_screen_stays_cheap() {
+        let width = 1920;
+        let height = 1080;
+        let pixels = vec![(20u8, 40, 70); (width * height) as usize];
+        let frame = frame_of(width, height, &pixels);
+        let template = Template { width: 360, height: 100, data: vec![210, 160, 40].repeat((360 * 100) as usize) };
+        let started = std::time::Instant::now();
+        assert_eq!(find_template(&frame, &template, 0.9), None);
+        let elapsed = started.elapsed();
+        assert!(elapsed.as_millis() < 250, "search took {elapsed:?}");
+    }
+
+    #[test]
+    fn a_missing_button_on_a_busy_screen_stays_cheap() {
+        let width = 1920;
+        let height = 1080;
+        let pixels = noise(width, height, 11);
+        let frame = frame_of(width, height, &pixels);
+        let template = Template { width: 360, height: 100, data: vec![210, 160, 40].repeat((360 * 100) as usize) };
+        let started = std::time::Instant::now();
+        assert_eq!(find_template(&frame, &template, 0.9), None);
+        let elapsed = started.elapsed();
+        assert!(elapsed.as_millis() < 250, "search took {elapsed:?}");
     }
 
     #[test]

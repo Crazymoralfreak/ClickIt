@@ -6,6 +6,7 @@ authors = ["Mityy"]
 license = "MIT"
 edition = "2021"
 rust-version = "1.85"
+default-run = "clickit"
 
 [lib]
 name = "clickit_lib"
@@ -38,11 +39,33 @@ features = [
   "Win32_Graphics_Gdi",
   "Win32_Media",
   "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_IO",
   "Win32_System_LibraryLoader",
   "Win32_System_Threading",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Memory",
+  "Win32_System_Pipes",
   "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ]
+
+[dependencies.ureq]
+version = "2"
+default-features = false
+features = ["json", "native-tls"]
+
+[dependencies.rmcp]
+version = "3.11.0"
+default-features = false
+features = ["server", "transport-io"]
+
+[dependencies.tokio]
+version = "1"
+default-features = false
+features = ["macros", "rt-multi-thread", "io-std"]
 
 [profile.dev]
 opt-level = 1

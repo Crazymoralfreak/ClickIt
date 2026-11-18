@@ -112,7 +112,12 @@
     "queueItemFailed": "Queue item \"{name}\": {reason}",
     "captureOutsideTarget": "The cursor is outside the target window. Point at the window content and try again.",
     "scheduleInvalid": "The schedule has a rule with a wrong time or interval",
-    "recordFailed": "Could not start recording: Windows did not allow watching the mouse and keyboard"
+    "recordFailed": "Could not start recording: Windows did not allow watching the mouse and keyboard",
+    "stale": "The scenario was already changed somewhere else. Open it again.",
+    "pending": "A start request is already open. Answer it or wait.",
+    "agentUnconfigured": "Set the address and the model name in the settings.",
+    "agentBusy": "The assistant is still answering the previous message.",
+    "agentFailed": "The request to the model failed: {message}"
   },
   "issues": {
     "nameEmpty": "Empty name",
@@ -171,13 +176,16 @@
       "recordSaveFailed": "Recorded steps were not saved into \"{name}\": {reason}",
       "updateFound": "A new version {version} was found",
       "updateInstall": "Version {version} is being installed, ClickIt is restarting",
-      "updateFailed": "Version {version} was not installed: {message}"
+      "updateFailed": "Version {version} was not installed: {message}",
+      "harnessCapture": "The harness captured an image {width}×{height}",
+      "harnessTemplate": "The harness saved template {file} for scenario {scenario}"
     },
     "sources": {
       "manual": "manual",
       "hotkey": "hotkey",
       "tray": "tray",
-      "schedule": "schedule"
+      "schedule": "schedule",
+      "harness": "harness"
     },
     "outcomes": {
       "completed": "completed",
@@ -196,6 +204,7 @@
     "queues": "Queues",
     "schedule": "Schedule",
     "journal": "Journal",
+    "assistant": "Assistant",
     "settings": "Settings",
     "help": "Help",
     "about": "About"
@@ -569,7 +578,20 @@
     "catchUp": "Catch up a missed daily or weekly start after ClickIt is launched",
     "catchUpHint": "The start is run once, and only if less than 12 hours have passed since the missed time.",
     "checkUpdates": "Check for updates at startup",
-    "checkUpdatesHint": "ClickIt asks GitHub whether a new version is out. An update that is found is downloaded and installed by itself when no run or recording is in progress; ClickIt starts again afterwards. With the box unticked the application does not use the network on its own.",
+    "checkUpdatesHint": "ClickIt asks GitHub whether a new version is out. An update that is found is downloaded and installed by itself when no run or recording is in progress; ClickIt starts again afterwards. With the box unticked, ClickIt does not contact GitHub by itself. Requests from the assistant to a model are set separately.",
+    "harnessTitle": "Harness and assistant",
+    "harness": "Allow harness connections",
+    "harnessHint": "While this is on, clickit-mcp can connect to this ClickIt over a local pipe. The harness receives screenshots and decides itself whether to send them to its model. Actions from that connection show on the Assistant page, on the Connections tab. Turning the box off closes the pipe and the screenshots.",
+    "harnessAutoRun": "Start scenarios without confirmation",
+    "harnessAutoRunHint": "While this is off, both clickit-mcp and the assistant ask in the ClickIt window before a scenario starts. When it is on, the application presses keys by itself, after the countdown. Stopping still needs no question.",
+    "agentEndpoint": "Model address",
+    "agentModel": "Model name",
+    "agentKey": "API key",
+    "agentKeyHint": "An empty address means the Assistant page does not use the network. A request is sent only when you send a message. Screenshots and scenario text go to this address.",
+    "agentKeySaved": "The key is stored on this computer and is not written to the journal.",
+    "agentKeyClear": "Remove the key",
+    "agentPresetOllama": "Ollama",
+    "agentPresetLmStudio": "LM Studio",
     "blocked": "Do not run while running",
     "blockedPlaceholder": "game.exe",
     "blockedNameLabel": "Name of the executable file",
@@ -657,14 +679,24 @@
       "stopCorner": "The cursor in the top-left corner of the primary monitor, if this is turned on in the settings.",
       "release": "On a stop, held mouse buttons and keys are released."
     },
+    "harness": {
+      "title": "Harness and assistant",
+      "intro": "A scenario can be built without doing it by hand. An external program connects through clickit-mcp, and the Assistant page talks to a model inside ClickIt. Both entrances call the same core actions.",
+      "mcp": "A harness starts clickit-mcp itself and speaks MCP to it. It brings its own model. The pipe is local and is open only while \"Allow harness connections\" is on. ClickIt does not write the harness settings file: the path to clickit-mcp.exe is set there. An example is in the README. Actions show on the Assistant page, on the Connections tab. The words of the chat stay with the harness.",
+      "assistant": "On the Assistant page ClickIt calls the model address from the settings. The address presets are Ollama and LM Studio. A cloud model uses its own address and key. An empty address means the page does not use the network.",
+      "shots": "With the connection on, the harness receives screenshots. The Assistant page sends screenshots and scenario text to the model address. There is no separate question for each shot.",
+      "autoRun": "Starting without confirmation is off by default. While the box is unticked, both MCP and the assistant wait for an answer in the ClickIt window. Stopping asks no question.",
+      "missing": "This version has no queue, schedule, mouse and keyboard recording, or scenario deletion through the harness."
+    },
     "tray": {
       "title": "Tray and schedule",
       "tray": "When its window is closed, ClickIt stays in the tray unless the settings say otherwise. The tray icon menu opens the window, starts a scenario or a queue, stops a run and quits.",
+      "hud": "While the window is hidden or minimized, the plaque above the tray stays for the whole run: the countdown, the run, a wait and a pause.",
       "schedule": "The schedule starts scenarios and queues at a set time while ClickIt is running. Such a start has no countdown. See the \"Schedule\" page for details."
     },
     "updates": {
       "title": "Updates",
-      "check": "At startup ClickIt asks GitHub whether a new version is out. This is the only time the application uses the network; the check can be turned off in the settings.",
+      "check": "At startup ClickIt asks GitHub whether a new version is out, if the settings allow it. Separately, the Assistant page contacts the model address when you send a message.",
       "install": "An update that is found is downloaded, its signature is checked, and it is installed by itself. ClickIt starts again afterwards.",
       "idle": "An update does not interrupt a run or a recording: it waits for them to end.",
       "portable": "A copy that runs without installation does not update itself and only tells about the new version.",
@@ -688,7 +720,7 @@
     "version": "Version",
     "dataDir": "Data folder",
     "repository": "Repository",
-    "network": "The application has no account and no cloud. It uses the network only for updates, from GitHub: at startup, if the settings allow it, and when you press \"Check for updates\"."
+    "network": "The application has no account and no cloud. It uses the network for updates from GitHub, if the settings allow it or you press \"Check for updates\", and for the model address on the Assistant page when you send a message."
   },
   "update": {
     "title": "Updates",
@@ -707,5 +739,57 @@
   "overlay": {
     "badgeStop": "Stop",
     "regionHint": "Drag to select a rectangle. Esc or the right button cancels"
+  },
+  "harness": {
+    "confirmTitle": "Start a scenario",
+    "confirmText": "A harness asks to start \"{name}\".",
+    "confirmOk": "Start"
+  },
+  "agent": {
+    "limit": "The limit was reached: {count} calls for one message. The turn stopped.",
+    "placeholder": "Describe the scenario to build",
+    "empty": "No conversation yet.",
+    "send": "Send",
+    "running": "Replying…",
+    "needSettings": "Set the address and the model name in the settings first.",
+    "notice": "Screenshots and scenario text go to the address from the settings.",
+    "local": "Model",
+    "connections": "Connections",
+    "connectionsEmpty": "No calls yet.",
+    "connectionsNotice": "The words of the chat stay with the harness. Here are the ClickIt actions for \"{client}\".",
+    "connectTitle": "How to connect a harness",
+    "connectRun": "In the settings, turn on \"Allow harness connections\". Leave ClickIt running afterwards: the pipe works only while the application is open.",
+    "connectClient": "A harness is an external program with its own model. ClickIt does not start it. The harness starts clickit-mcp itself and sends requests through it.",
+    "connectPath": "Replace an empty \"mcpServers\": {} with the text below. The path already points at clickit-mcp next to this copy of ClickIt. If mcpServers already lists other servers, copy only the clickit entry and add it beside them.",
+    "connectMissing": "clickit-mcp.exe is not next to this copy of ClickIt. Put it in the same folder: the path in the text already points there.",
+    "connectCopy": "Copy",
+    "connectCopyEntry": "Copy only clickit",
+    "connectCopied": "Copied",
+    "connectSee": "Lines appear here when the harness calls an action: list, edit, screenshot, or start. Until there is a call, the list stays empty.",
+    "role": {
+      "user": "You",
+      "assistant": "Model",
+      "tool": "Action",
+      "result": "ClickIt"
+    },
+    "externalLines": {
+      "scenarios": "Scenarios: {count}",
+      "scenario": "Scenario \"{name}\"",
+      "created": "Created scenario \"{name}\"",
+      "saved": "Saved scenario \"{name}\"",
+      "rejected": "The scenario was not written",
+      "issues": "Notes: {count}",
+      "windows": "Windows: {count}",
+      "journal": "Journal entries: {count}",
+      "started": "The run started",
+      "declined": "The run was declined",
+      "runError": "The run did not start",
+      "stopped": "Stopped",
+      "capture": "Screenshot {width}×{height}",
+      "color": "{color} · {x}, {y}",
+      "template": "Template {file}, {width}×{height}",
+      "done": "Done",
+      "closed": "Connection closed"
+    }
   }
 }

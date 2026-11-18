@@ -7,11 +7,16 @@ use std::sync::Arc;
 use chrono::Local;
 use tauri::State;
 
+use serde_json::json;
+
+use crate::agent::{self, AgentEntry};
+use crate::external::{Dialog, McpSnippet};
 use crate::app::Core;
+use crate::harness;
 use crate::engine::Source;
 use crate::error::{AppError, AppResult};
 use crate::model::queue::{Queue, QUEUE_VERSION};
-use crate::model::scenario::{new_id, Scenario, WindowTarget, SCENARIO_VERSION};
+use crate::model::scenario::{new_id, Scenario, WindowTarget};
 use crate::model::schedule::{RunTarget, ScheduleRule};
 use crate::model::settings::Settings;
 use crate::model::validate::{validate_queue, validate_scenario, Issue};
@@ -77,6 +82,53 @@ pub fn update_check(core: CoreState<'_>) {
     update::check_now(core.inner());
 }
 
+#[tauri::command(async)]
+pub fn harness_reply(core: CoreState<'_>, request_id: u64, accepted: bool) {
+    harness::reply(core.inner(), request_id, accepted);
+}
+
+#[tauri::command(async)]
+pub fn window_show(core: CoreState<'_>) {
+    crate::shell::window::show_main(core.app());
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentInfo {
+    pub key_set: bool,
+}
+
+#[tauri::command(async)]
+pub fn agent_info(core: CoreState<'_>) -> AgentInfo {
+    AgentInfo { key_set: !core.store.agent_key().is_empty() }
+}
+
+#[tauri::command(async)]
+pub fn agent_key_set(core: CoreState<'_>, key: String) -> AppResult<()> {
+    core.store.set_agent_key(&key)
+}
+
+#[tauri::command(async)]
+pub fn agent_history(core: CoreState<'_>) -> Vec<AgentEntry> {
+    agent::history(core.inner())
+}
+
+#[tauri::command(async)]
+pub fn agent_send(core: CoreState<'_>, text: String) -> AppResult<()> {
+    agent::send(core.inner(), text)
+}
+
+#[tauri::command(async)]
+pub fn harness_dialogs(core: CoreState<'_>) -> Vec<Dialog> {
+    crate::external::list(core.inner())
+}
+
+/// Ready MCP text for this copy of ClickIt. The path points at `clickit-mcp.exe` beside it.
+#[tauri::command(async)]
+pub fn harness_mcp_snippet() -> McpSnippet {
+    crate::external::running_mcp_snippet()
+}
+
 // Scenarios
 
 #[tauri::command(async)]
@@ -98,18 +150,10 @@ pub fn scenario_create(core: CoreState<'_>, name: String) -> AppResult<Scenario>
 }
 
 #[tauri::command(async)]
-pub fn scenario_save(core: CoreState<'_>, mut scenario: Scenario) -> AppResult<()> {
-    if core.scenario_in_use(&scenario.id) {
-        return Err(AppError::new("busy"));
-    }
-    // A late save must not bring a deleted scenario back.
-    let stored = core.store.load_scenario(&scenario.id)?;
-    scenario.version = SCENARIO_VERSION;
-    core.store.save_scenario(&scenario)?;
-    if stored.name != scenario.name {
-        core.refresh_tray();
-    }
-    Ok(())
+pub fn scenario_save(core: CoreState<'_>, scenario: Scenario) -> AppResult<Scenario> {
+    let value = harness::save_scenario(core.inner(), &json!({"scenario": scenario}), false)?;
+    let saved = value.get("scenario").cloned().ok_or_else(|| AppError::new("invalid"))?;
+    Ok(serde_json::from_value(saved)?)
 }
 
 #[tauri::command(async)]

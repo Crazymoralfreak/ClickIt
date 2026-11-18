@@ -131,6 +131,54 @@ impl Store {
         self.root.join("journal.prev.log")
     }
 
+    pub fn harness_token_path(&self) -> PathBuf {
+        self.root.join("harness.token")
+    }
+
+    pub fn agent_key_path(&self) -> PathBuf {
+        self.root.join("agent.key")
+    }
+
+    pub fn agent_transcript_path(&self) -> PathBuf {
+        self.root.join("agent.jsonl")
+    }
+
+    /// Text of external harness dialogs. Pictures are not stored here.
+    pub fn harness_dialog_path(&self) -> PathBuf {
+        self.root.join("harness.jsonl")
+    }
+
+    /// The secret the local pipe asks for. Created the first time it is needed.
+    pub fn harness_token(&self) -> AppResult<String> {
+        let path = self.harness_token_path();
+        if let Ok(text) = fs::read_to_string(&path) {
+            let token = text.trim();
+            if token.len() >= 32 && token.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Ok(token.to_string());
+            }
+        }
+        let token: String = (0..32).map(|_| format!("{:02x}", fastrand::u8(..))).collect();
+        fs::write(&path, &token)?;
+        Ok(token)
+    }
+
+    pub fn agent_key(&self) -> String {
+        fs::read_to_string(self.agent_key_path()).unwrap_or_default().trim().to_string()
+    }
+
+    pub fn set_agent_key(&self, key: &str) -> AppResult<()> {
+        let key = key.trim();
+        if key.is_empty() {
+            let path = self.agent_key_path();
+            if path.exists() {
+                fs::remove_file(path)?;
+            }
+            return Ok(());
+        }
+        fs::write(self.agent_key_path(), key)?;
+        Ok(())
+    }
+
     // Settings
 
     /// A missing file gives defaults. A damaged one is kept as `settings.json.bad`

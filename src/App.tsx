@@ -8,6 +8,7 @@ import {
   type ConfirmOptions,
   type Page,
 } from "./app/context";
+import { AssistantPage } from "./features/assistant/AssistantPage";
 import { AboutPage } from "./features/help/AboutPage";
 import { HelpPage } from "./features/help/HelpPage";
 import { JournalPage } from "./features/journal/JournalPage";
@@ -65,6 +66,7 @@ const NAV: ReadonlyArray<{ page: Page; label: TKey }> = [
   { page: "queues", label: "nav.queues" },
   { page: "schedule", label: "nav.schedule" },
   { page: "journal", label: "nav.journal" },
+  { page: "assistant", label: "nav.assistant" },
   { page: "settings", label: "nav.settings" },
   { page: "help", label: "nav.help" },
   { page: "about", label: "nav.about" },
@@ -89,6 +91,7 @@ function MainWindow({ boot }: { boot: Boot }) {
   });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [dialog, setDialog] = useState<Dialog | null>(null);
+  const [harnessConfirm, setHarnessConfirm] = useState<{ requestId: number; name: string } | null>(null);
 
   const language: Language = settings.language ?? boot.info.systemLanguage;
   const languageRef = useRef(language);
@@ -275,6 +278,9 @@ function MainWindow({ boot }: { boot: Boot }) {
     }
   });
 
+  useAppEvent("harness:scenario", () => touch("scenarios"));
+  useAppEvent("harness:confirm", setHarnessConfirm);
+
   useAppEvent("data:changed", ({ kind }) => {
     touch(kind);
     if (kind === "settings") {
@@ -356,6 +362,12 @@ function MainWindow({ boot }: { boot: Boot }) {
             ))}
           </div>
           {dialog ? <DialogHost dialog={dialog} onDone={() => setDialog(null)} /> : null}
+          {harnessConfirm ? (
+            <HarnessConfirm
+              request={harnessConfirm}
+              onDone={() => setHarnessConfirm(null)}
+            />
+          ) : null}
         </div>
       </AppContext.Provider>
     </I18nProvider>
@@ -393,6 +405,8 @@ function PageView({ page }: { page: Page }) {
       return <SettingsPage />;
     case "journal":
       return <JournalPage />;
+    case "assistant":
+      return <AssistantPage />;
     case "help":
       return <HelpPage />;
     case "about":
@@ -402,6 +416,36 @@ function PageView({ page }: { page: Page }) {
       throw new Error(`Unknown page: ${String(unreachable)}`);
     }
   }
+}
+
+function HarnessConfirm({
+  request,
+  onDone,
+}: {
+  request: { requestId: number; name: string };
+  onDone: () => void;
+}) {
+  const { t } = useT();
+  const finish = (accepted: boolean) => {
+    onDone();
+    void api.harnessReply(request.requestId, accepted).catch(() => undefined);
+  };
+  return (
+    <Modal
+      title={t("harness.confirmTitle")}
+      onClose={() => finish(false)}
+      footer={
+        <>
+          <Button onClick={() => finish(false)}>{t("common.cancel")}</Button>
+          <Button variant="primary" autoFocus onClick={() => finish(true)}>
+            {t("harness.confirmOk")}
+          </Button>
+        </>
+      }
+    >
+      <p className="modal-text">{t("harness.confirmText", { name: request.name })}</p>
+    </Modal>
+  );
 }
 
 function DialogHost({ dialog, onDone }: { dialog: Dialog; onDone: () => void }) {

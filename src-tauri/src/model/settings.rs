@@ -24,9 +24,17 @@ pub struct Settings {
     pub close_exits: bool,
     /// Run a missed daily or weekly slot once after startup.
     pub catch_up: bool,
-    /// Ask GitHub for a newer version at startup. This is the only network
-    /// access of the application; with it off ClickIt stays offline.
+    /// Ask GitHub for a newer version at startup. With it off, ClickIt does not
+    /// contact GitHub by itself. The assistant is a separate, explicit request.
     pub check_updates: bool,
+    /// Accept a local connection from `clickit-mcp`. Off by default.
+    pub harness: bool,
+    /// A harness or the assistant may start a scenario without the confirm dialog.
+    pub harness_auto_run: bool,
+    /// OpenAI-compatible base address, for example `http://127.0.0.1:11434/v1`. Empty means the assistant is off.
+    pub agent_endpoint: String,
+    /// Model name sent with every assistant request.
+    pub agent_model: String,
     /// What Start, the hotkey and the tray "Start" item run.
     pub current: Option<RunTarget>,
 }
@@ -43,6 +51,10 @@ impl Default for Settings {
             close_exits: false,
             catch_up: true,
             check_updates: true,
+            harness: false,
+            harness_auto_run: false,
+            agent_endpoint: String::new(),
+            agent_model: String::new(),
             current: None,
         }
     }
