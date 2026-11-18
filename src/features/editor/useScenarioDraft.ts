@@ -1,7 +1,7 @@
 // Draft of the scenario being edited: load, debounced save and validation.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../../api";
+import { api, toAppError } from "../../api";
 import { useAppEvent } from "../../api/events";
 import { useApp } from "../../app/context";
 import type { Issue } from "../../types/runtime";
@@ -60,6 +60,7 @@ export function useScenarioDraft(id: string): ScenarioDraft {
   const saved = useRef<ListedFields | null>(null);
   // Saves run one after another; the chain itself never rejects.
   const saveChain = useRef<Promise<void>>(Promise.resolve());
+  const loadDiscard = useRef<() => void>(() => undefined);
 
   const validate = useCallback(
     (scenario: Scenario) => {
@@ -91,9 +92,20 @@ export function useScenarioDraft(id: string): ScenarioDraft {
     validate(snapshot);
     const save = saveChain.current.then(async () => {
       try {
-        await api.scenarioSave(snapshot);
+        const stored = await api.scenarioSave(snapshot);
+        const current = latest.current;
+        if (current && current.id === stored.id) {
+          const next = { ...current, revision: stored.revision };
+          latest.current = next;
+          setDraft(next);
+        }
       } catch (error) {
-        dirty.current = true;
+        if (toAppError(error).code === "stale") {
+          dirty.current = false;
+          window.setTimeout(() => loadDiscard.current(), 0);
+        } else {
+          dirty.current = true;
+        }
         throw error;
       }
       const listed = listedFields(snapshot);
@@ -179,6 +191,13 @@ export function useScenarioDraft(id: string): ScenarioDraft {
 
   const peek = useCallback(() => latest.current, []);
   const reload = useCallback(() => void load(false), [load]);
+  loadDiscard.current = () => void load(true);
+
+  useAppEvent("harness:scenario", (event) => {
+    if (event.id === id) {
+      void load(true);
+    }
+  });
 
   useEffect(() => {
     void load(true);

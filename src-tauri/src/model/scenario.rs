@@ -271,6 +271,8 @@ fn enabled_default() -> bool {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Step {
+    /// Empty until a save fills it in. The editor always sends one.
+    #[serde(default)]
     pub id: String,
     #[serde(default = "enabled_default")]
     pub enabled: bool,
@@ -302,6 +304,9 @@ impl Step {
 pub struct Scenario {
     #[serde(default)]
     pub version: u32,
+    /// Grows by one on every successful save. A save carrying an older number is rejected.
+    #[serde(default)]
+    pub revision: u64,
     pub id: String,
     pub name: String,
     #[serde(default)]
@@ -320,6 +325,7 @@ impl Scenario {
     pub fn new(name: &str) -> Self {
         Self {
             version: SCENARIO_VERSION,
+            revision: 0,
             id: new_id("sc"),
             name: name.to_string(),
             mode: ScenarioMode::Screen,
@@ -341,6 +347,11 @@ impl Scenario {
         out.sort();
         out.dedup();
         out
+    }
+
+    /// Fills steps the caller left without an id, including nested ones.
+    pub fn fill_empty_ids(&mut self) {
+        fill_empty_ids(&mut self.steps);
     }
 
     /// Gives every step a fresh id; used by duplicate and import.
@@ -378,6 +389,31 @@ fn collect_templates(steps: &[Step], out: &mut Vec<String>) {
         }
         for list in step.children() {
             collect_templates(list, out);
+        }
+    }
+}
+
+fn fill_empty_ids(steps: &mut [Step]) {
+    for step in steps {
+        if step.id.is_empty() {
+            step.id = new_id("s");
+        }
+        match &mut step.kind {
+            StepKind::If { then_steps, else_steps, .. } => {
+                fill_empty_ids(then_steps);
+                fill_empty_ids(else_steps);
+            }
+            StepKind::Loop { steps, .. } => fill_empty_ids(steps),
+            StepKind::Click { .. }
+            | StepKind::Move { .. }
+            | StepKind::Drag { .. }
+            | StepKind::Scroll { .. }
+            | StepKind::Key { .. }
+            | StepKind::Text { .. }
+            | StepKind::Pause { .. }
+            | StepKind::Wait { .. }
+            | StepKind::BreakLoop
+            | StepKind::Stop => {}
         }
     }
 }

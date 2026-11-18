@@ -143,6 +143,11 @@ mod tests {
         "pointOutsideTarget",
         "inputFailed",
         "appExit",
+        "stale",
+        "pending",
+        "agentUnconfigured",
+        "agentBusy",
+        "agentFailed",
     ];
 
     #[test]

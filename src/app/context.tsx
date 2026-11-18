@@ -4,7 +4,7 @@ import { createContext, useContext } from "react";
 import type { AppInfo, DataKind, RunStatus, UpdateStatus } from "../types/runtime";
 import type { RunTarget, Settings } from "../types/scenario";
 
-export type Page = "scenarios" | "queues" | "schedule" | "settings" | "journal" | "help" | "about";
+export type Page = "scenarios" | "queues" | "schedule" | "assistant" | "settings" | "journal" | "help" | "about";
 
 export interface ConfirmOptions {
   title: string;

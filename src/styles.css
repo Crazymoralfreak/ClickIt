@@ -200,6 +200,44 @@ p {
   margin-bottom: 10px;
 }
 
+.section-collapsed {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.section-collapsed .section-title {
+  margin-bottom: 0;
+}
+
+.section-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.section-mark {
+  flex: 0 0 auto;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--text-dim);
+}
+
+.section-mark-open {
+  transform: rotate(90deg);
+}
+
 /* Controls */
 
 .btn {
@@ -625,6 +663,20 @@ p {
   border: 0;
   border-radius: var(--radius);
   padding: 6px 12px;
+  cursor: pointer;
+}
+
+.hud {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 14px;
+  background: #1d2026;
+  color: #f2f4f8;
+  border: 2px solid #6ea8fe;
+  border-radius: 10px;
+  overflow: hidden;
   cursor: pointer;
 }
 

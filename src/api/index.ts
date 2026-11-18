@@ -2,7 +2,10 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgentEntry,
   AppError,
+  HarnessDialog,
+  McpSnippet,
   AppInfo,
   Issue,
   JournalEntry,
@@ -52,7 +55,8 @@ export const api = {
   scenarioGet: (id: string) => invoke<Scenario>("scenario_get", { id }),
   scenarioCreate: (name: string) => invoke<Scenario>("scenario_create", { name }),
   /** Rejects with `busy` while this scenario is running or being recorded. */
-  scenarioSave: (scenario: Scenario) => invoke<void>("scenario_save", { scenario }),
+  /** Returns the scenario as stored, including the new revision. */
+  scenarioSave: (scenario: Scenario) => invoke<Scenario>("scenario_save", { scenario }),
   scenarioDuplicate: (id: string, name: string) => invoke<Scenario>("scenario_duplicate", { id, name }),
   scenarioDelete: (id: string) => invoke<void>("scenario_delete", { id }),
   /** Checks an unsaved scenario; template files are looked up in its folder. */
@@ -99,6 +103,21 @@ export const api = {
   /** Overlay only: takes the cursor position as the second corner and finishes. */
   regionFinish: () => invoke<void>("region_finish"),
   regionCancel: () => invoke<void>("region_cancel"),
+
+  harnessReply: (requestId: number, accepted: boolean) =>
+    invoke<void>("harness_reply", { requestId, accepted }),
+  windowShow: () => invoke<void>("window_show"),
+
+  agentInfo: () => invoke<{ keySet: boolean }>("agent_info"),
+  agentKeySet: (key: string) => invoke<void>("agent_key_set", { key }),
+  agentHistory: () => invoke<AgentEntry[]>("agent_history"),
+  agentSend: (text: string) => invoke<void>("agent_send", { text }),
+  /** Tool-call dialogs from MCP clients. The words of those chats are not included. */
+  harnessDialogs: () => invoke<HarnessDialog[]>("harness_dialogs"),
+  /** Drops a closed connection tab. An open connection is refused. */
+  harnessDialogForget: (id: number) => invoke<void>("harness_dialog_forget", { id }),
+  /** MCP text with the path of clickit-mcp.exe next to this copy of ClickIt. */
+  harnessMcpSnippet: () => invoke<McpSnippet>("harness_mcp_snippet"),
 
   journalGet: () => invoke<JournalEntry[]>("journal_get"),
   /** Visible top-level windows, for picking a window target. */

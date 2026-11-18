@@ -117,9 +117,21 @@ const TOPICS: ReadonlyArray<HelpTopic> = [
     ],
   },
   {
+    title: "help.harness.title",
+    parts: [
+      { kind: "text", text: "help.harness.intro" },
+      { kind: "text", text: "help.harness.mcp" },
+      { kind: "text", text: "help.harness.assistant" },
+      { kind: "text", text: "help.harness.shots" },
+      { kind: "text", text: "help.harness.autoRun" },
+      { kind: "text", text: "help.harness.missing" },
+    ],
+  },
+  {
     title: "help.tray.title",
     parts: [
       { kind: "text", text: "help.tray.tray" },
+      { kind: "text", text: "help.tray.hud" },
       { kind: "text", text: "help.tray.schedule" },
     ],
   },

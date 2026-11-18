@@ -6,9 +6,9 @@
 //! thread (windows, hotkeys, tray): the main thread may be waiting for the
 //! same lock in a hotkey or tray handler.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::thread;
+use std::thread::{self, ThreadId};
 use std::time::Duration;
 
 use chrono::Local;
@@ -19,7 +19,10 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::Shortcut;
 use windows::Win32::Globalization::GetUserDefaultUILanguage;
 
+use crate::agent::Session;
+use crate::external::Log;
 use crate::engine::conditions::capture_point;
+use crate::harness::{self, ConfirmWait};
 use crate::engine::{build_plan, Engine, RunOptions, Source};
 use crate::error::{AppError, AppResult};
 use crate::input;
@@ -97,13 +100,23 @@ pub struct Core {
     /// An update is being installed: nothing new starts, the process is about to end.
     updating: AtomicBool,
     tray: Mutex<TrayShown>,
+    /// The thread that owns the window loop. Creating or destroying a window on it deadlocks or panics.
+    ui_thread: ThreadId,
+    /// Last minimized state of the main window, so a drag does not rebuild the plaque.
+    main_minimized: AtomicBool,
+    /// The confirm dialog the harness and the assistant share. One at a time.
+    pub(crate) confirm: Mutex<Option<ConfirmWait>>,
+    pub(crate) confirm_seq: AtomicU64,
+    pub agent: Session,
+    /// Tool calls from clickit-mcp, shown on the Assistant page.
+    pub external: Log,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn with_core(app: &AppHandle, action: impl FnOnce(&Arc<Core>)) {
+pub(crate) fn with_core(app: &AppHandle, action: impl FnOnce(&Arc<Core>)) {
     if let Some(core) = app.try_state::<Arc<Core>>() {
         action(core.inner());
     }
@@ -119,6 +132,19 @@ pub fn system_language() -> &'static str {
         "ru"
     } else {
         "en"
+    }
+}
+
+/// The plaque stays for the whole run: countdown, execution, waiting and both pauses.
+/// Recording keeps its own badge. Idle has nothing to show.
+fn hud_while_hidden(state: RunState) -> bool {
+    match state {
+        RunState::Countdown
+        | RunState::Running
+        | RunState::Waiting
+        | RunState::PausedWindow
+        | RunState::PausedProcess => true,
+        RunState::Idle | RunState::Recording => false,
     }
 }
 
@@ -264,6 +290,12 @@ impl Core {
             quitting: AtomicBool::new(false),
             updating: AtomicBool::new(false),
             tray: Mutex::new(TrayShown::default()),
+            ui_thread: thread::current().id(),
+            main_minimized: AtomicBool::new(false),
+            confirm: Mutex::new(None),
+            confirm_seq: AtomicU64::new(0),
+            agent: Session::new(),
+            external: Log::new(),
         });
         app.manage(Arc::clone(&core));
         Ok(core)
@@ -302,6 +334,8 @@ impl Core {
         new.blocked_processes = clean_processes(&new.blocked_processes);
         new.hotkey_start_stop = new.hotkey_start_stop.trim().to_string();
         new.hotkey_capture = new.hotkey_capture.trim().to_string();
+        new.agent_endpoint = new.agent_endpoint.trim().to_string();
+        new.agent_model = new.agent_model.trim().to_string();
 
         let start_stop = hotkeys::parse(&new.hotkey_start_stop)?;
         let capture = hotkeys::parse(&new.hotkey_capture)?;
@@ -338,8 +372,15 @@ impl Core {
             *lock(&self.start_stop) = Some(start_stop);
         }
         *lock(&self.settings) = new.clone();
+        if old.harness && !new.harness {
+            harness::kick();
+        }
         self.refresh_tray();
         Ok(new)
+    }
+
+    pub(crate) fn is_updating(&self) -> bool {
+        self.updating.load(Ordering::SeqCst)
     }
 
     /// Registers the start/stop hotkey from the settings. Called once at startup.
@@ -410,6 +451,36 @@ impl Core {
         } else {
             self.refresh_tooltip(status);
         }
+        self.sync_hud();
+    }
+
+    /// The small window above the tray for the whole run while the main window
+    /// is hidden or minimized. The window is left in place when the state
+    /// changes inside the run, so a wait does not blink it off.
+    pub(crate) fn sync_hud(&self) {
+        if thread::current().id() == self.ui_thread {
+            let app = self.app.clone();
+            thread::spawn(move || with_core(&app, |core| core.apply_hud()));
+        } else {
+            self.apply_hud();
+        }
+    }
+
+    fn apply_hud(&self) {
+        let hidden = window::main_hidden(&self.app);
+        let active = hud_while_hidden(self.hub.get().state);
+        if hidden && active {
+            if !window::hud_open(&self.app) {
+                let _ = window::open_hud(&self.app);
+            }
+        } else if window::hud_open(&self.app) {
+            window::close_hud(&self.app);
+        }
+    }
+
+    /// Returns whether the minimized flag changed. Called from the window loop.
+    fn note_minimized(&self, minimized: bool) -> bool {
+        self.main_minimized.swap(minimized, Ordering::Relaxed) != minimized
     }
 
     fn tray_action(&self, id: &str) {
@@ -779,6 +850,7 @@ impl Core {
         if self.quitting.swap(true, Ordering::SeqCst) {
             return;
         }
+        harness::kick();
         let core = Arc::clone(self);
         thread::spawn(move || {
             core.recorder.stop(RecordStopReason::Exit);
@@ -809,6 +881,8 @@ impl Host for Core {
 /// Creates the core, the tray icon and the scheduler thread, registers the
 /// hotkey and shows the main window unless started by the autostart entry.
 pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    // Before the window opens, so the Assistant page can already see clickit-mcp.exe.
+    crate::external::place_bundled_mcp();
     let core = Core::create(app)?;
     core.journal.add("appStart", &[("version", app.package_info().version.to_string())]);
     tray::create(app, tray_menu)?;
@@ -825,6 +899,7 @@ pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         scheduler_core.scheduler.tick(Local::now().naive_local(), catch_up, scheduler_core.as_ref());
     })?;
 
+    harness::serve(Arc::clone(&core));
     if !std::env::args().any(|arg| arg == AUTOSTART_FLAG) {
         window::show_main(app);
     }
@@ -871,22 +946,50 @@ fn tray_menu(app: &AppHandle, id: &str) {
 /// Closing the main window hides it to the tray, or quits when the settings say so.
 /// The helper windows are closed only by the core.
 pub fn window_event(closing: &Window, event: &WindowEvent) {
-    let WindowEvent::CloseRequested { api, .. } = event else {
-        return;
-    };
-    api.prevent_close();
-    let label = closing.label().to_string();
-    with_core(closing.app_handle(), |core| {
-        if label == window::MAIN {
-            if core.settings().close_exits {
-                core.quit();
-            } else {
-                let _ = closing.hide();
-            }
-        } else if label == window::REGION {
-            let core = Arc::clone(core);
-            thread::spawn(move || core.region_cancel());
+    match event {
+        WindowEvent::CloseRequested { api, .. } => {
+            api.prevent_close();
+            let label = closing.label().to_string();
+            with_core(closing.app_handle(), |core| {
+                if label == window::MAIN {
+                    if core.settings().close_exits {
+                        core.quit();
+                    } else {
+                        let _ = closing.hide();
+                        core.sync_hud();
+                    }
+                } else if label == window::REGION {
+                    let core = Arc::clone(core);
+                    thread::spawn(move || core.region_cancel());
+                }
+                // The badge stays for as long as the recording goes on.
+            });
         }
-        // The badge stays for as long as the recording goes on.
-    });
+        WindowEvent::Resized(_) if closing.label() == window::MAIN => {
+            let minimized = closing.is_minimized().unwrap_or(false);
+            with_core(closing.app_handle(), |core| {
+                if core.note_minimized(minimized) {
+                    core.sync_hud();
+                }
+            });
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::hud_while_hidden;
+    use crate::runtime::RunState;
+
+    #[test]
+    fn the_tray_plaque_stays_up_for_the_whole_run() {
+        assert!(hud_while_hidden(RunState::Countdown));
+        assert!(hud_while_hidden(RunState::Running));
+        assert!(hud_while_hidden(RunState::Waiting));
+        assert!(hud_while_hidden(RunState::PausedWindow));
+        assert!(hud_while_hidden(RunState::PausedProcess));
+        assert!(!hud_while_hidden(RunState::Idle));
+        assert!(!hud_while_hidden(RunState::Recording));
+    }
 }

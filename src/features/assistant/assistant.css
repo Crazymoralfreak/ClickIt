@@ -1,0 +1,161 @@
+.assistant-snippet {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 12px/1.45 Consolas, "Cascadia Mono", monospace;
+  resize: vertical;
+  user-select: text;
+}
+
+.assistant-snippet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.assistant-steps {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--text-dim);
+}
+
+.assistant-steps li + li {
+  margin-top: 6px;
+}
+
+.assistant-switch {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.assistant-connections {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.assistant-tab {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.assistant-tab-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.assistant-tab-label,
+.assistant-tab-close {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.assistant-tab-label {
+  padding: 5px 2px 5px 12px;
+}
+
+.assistant-tab-close {
+  padding: 5px 8px 5px 4px;
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+.assistant-tab-active .assistant-tab-close {
+  color: var(--accent);
+}
+
+.assistant-tab-close:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.assistant-hint,
+.assistant-empty {
+  color: var(--text-dim);
+  margin: 0 0 12px;
+}
+
+.assistant-log {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 240px;
+  max-height: calc(100vh - 280px);
+  overflow: auto;
+  margin-bottom: 12px;
+}
+
+.assistant-entry {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  background: var(--surface);
+}
+
+.assistant-user,
+.assistant-call {
+  background: var(--surface-2);
+}
+
+.assistant-tool {
+  font-size: 13px;
+}
+
+.assistant-role {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+
+.assistant-text {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.assistant-shot {
+  display: block;
+  max-width: 100%;
+  margin-top: 8px;
+  border-radius: var(--radius);
+}
+
+.assistant-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.assistant-form .input {
+  flex: 1;
+}
+
+.link-button {
+  font: inherit;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  text-decoration: underline;
+}

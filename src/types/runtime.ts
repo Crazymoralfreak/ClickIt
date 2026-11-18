@@ -3,6 +3,50 @@
 import type { Language, TargetKind } from "./scenario";
 
 /** Error returned by any command: `errors.<code>` in the dictionaries, `params` fill placeholders. */
+export type AgentRole = "user" | "assistant" | "tool";
+
+/** One line of the assistant conversation. `imagePng` is base64 and is not stored on disk. */
+export interface AgentEntry {
+  id: number;
+  role: AgentRole;
+  text: string;
+  imagePng?: string;
+}
+
+/** Who spoke a line in an external harness dialog. */
+export type DialogRole = "call" | "result";
+
+/** One tool call or its result from an external harness. */
+export interface DialogEntry {
+  id: number;
+  role: DialogRole;
+  text: string;
+  imagePng?: string;
+}
+
+/** One external connection. The chat text stays in that program. */
+export interface HarnessDialog {
+  id: number;
+  client: string;
+  open: boolean;
+  entries: DialogEntry[];
+}
+
+/** Ready text for a harness MCP config. `servers` replaces an empty `"mcpServers": {}`. */
+export interface McpSnippet {
+  servers: string;
+  entry: string;
+  found: boolean;
+}
+
+/** A new line, or a connection opening, for a harness dialog already on screen. */
+export interface HarnessDialogEvent {
+  id: number;
+  client: string;
+  open: boolean;
+  entry?: DialogEntry;
+}
+
 export interface AppError {
   code: string;
   params?: Record<string, string>;

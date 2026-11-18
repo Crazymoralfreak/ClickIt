@@ -3,6 +3,8 @@
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
 import type {
+  AgentEntry,
+  HarnessDialogEvent,
   CaptureResult,
   DataKind,
   RecordFinished,
@@ -25,6 +27,14 @@ export interface AppEvents {
   "journal:changed": null;
   /** Every step of a check for updates and of the installation of one. */
   "update:status": UpdateStatus;
+  /** A harness saved this scenario. The open editor drops its draft and reads the file. */
+  "harness:scenario": { id: string };
+  /** ClickIt is asking whether a harness may start this scenario. */
+  "harness:confirm": { requestId: number; name: string };
+  "agent:entry": AgentEntry;
+  "agent:idle": null;
+  /** A line from an external harness connection, or a change of that connection. */
+  "harness:dialog": HarnessDialogEvent;
 }
 
 export type AppEventName = keyof AppEvents;

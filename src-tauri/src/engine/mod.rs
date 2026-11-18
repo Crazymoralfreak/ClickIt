@@ -58,6 +58,8 @@ pub enum Source {
     Hotkey,
     Tray,
     Schedule,
+    /// Started by a harness or by the assistant inside the window.
+    Harness,
 }
 
 impl Source {
@@ -67,6 +69,7 @@ impl Source {
             Source::Hotkey => "hotkey",
             Source::Tray => "tray",
             Source::Schedule => "schedule",
+            Source::Harness => "harness",
         }
     }
 

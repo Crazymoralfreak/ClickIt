@@ -188,6 +188,8 @@ export type RepeatableStep = ClickStep | MoveStep | DragStep | ScrollStep | KeyS
 export interface Scenario {
   version: number;
   id: string;
+  /** Grows by one on every successful save. A stale copy is rejected. */
+  revision: number;
   name: string;
   mode: ScenarioMode;
   target: WindowTarget;
@@ -271,8 +273,16 @@ export interface Settings {
   blockedProcesses: string[];
   closeExits: boolean;
   catchUp: boolean;
-  /** Ask GitHub for a newer version at startup; the only network access of the application. */
+  /** Ask GitHub for a newer version at startup. The assistant is a separate, explicit request. */
   checkUpdates: boolean;
+  /** Accept a local connection from clickit-mcp. Off by default. */
+  harness: boolean;
+  /** A harness or the assistant may start a scenario without the confirm dialog. */
+  harnessAutoRun: boolean;
+  /** OpenAI-compatible base address. Empty means the assistant does not use the network. */
+  agentEndpoint: string;
+  /** Model name sent with every assistant request. */
+  agentModel: string;
   /** What Start, the hotkey and the tray "Start" item run. */
   current: RunTarget | null;
 }

@@ -3,13 +3,15 @@ import { api } from "../../api";
 import { useApp } from "../../app/context";
 import { useT } from "../../i18n";
 import { MAX_COUNTDOWN_SEC, type Language } from "../../types/scenario";
-import { Button, Checkbox, Field, NumberInput, PageFrame, Section, Select } from "../../ui";
+import { Button, Checkbox, Field, NumberInput, PageFrame, Section, Select, TextInput } from "../../ui";
 import { BlockedProcesses } from "./BlockedProcesses";
 import { HotkeyInput } from "./HotkeyInput";
 import "./settings.css";
 
 const DEFAULT_HOTKEY_START_STOP = "F6";
 const DEFAULT_HOTKEY_CAPTURE = "F8";
+const OLLAMA_ENDPOINT = "http://127.0.0.1:11434/v1";
+const LM_STUDIO_ENDPOINT = "http://127.0.0.1:1234/v1";
 
 interface CheckRowProps {
   checked: boolean;
@@ -59,6 +61,32 @@ export function SettingsPage() {
   const { info, settings, saveSettings, locked, showError } = useApp();
   /** Null until the registry entry has been read. */
   const [autostart, setAutostart] = useState<boolean | null>(null);
+  const [endpoint, setEndpoint] = useState(settings.agentEndpoint);
+  const [model, setModel] = useState(settings.agentModel);
+  const [key, setKey] = useState("");
+  const [keySet, setKeySet] = useState(false);
+
+  useEffect(() => {
+    setEndpoint(settings.agentEndpoint);
+    setModel(settings.agentModel);
+  }, [settings.agentEndpoint, settings.agentModel]);
+
+  useEffect(() => {
+    api
+      .agentInfo()
+      .then((info) => setKeySet(info.keySet))
+      .catch(showError);
+  }, [showError]);
+
+  const saveAgent = (agentEndpoint: string, agentModel: string) => {
+    const nextEndpoint = agentEndpoint.trim();
+    const nextModel = agentModel.trim();
+    setEndpoint(nextEndpoint);
+    setModel(nextModel);
+    if (nextEndpoint !== settings.agentEndpoint || nextModel !== settings.agentModel) {
+      void saveSettings({ ...settings, agentEndpoint: nextEndpoint, agentModel: nextModel });
+    }
+  };
 
   const readAutostart = useCallback(
     () => api.autostartGet().then(setAutostart).catch(showError),
@@ -82,7 +110,7 @@ export function SettingsPage() {
 
   return (
     <PageFrame title={t("nav.settings")}>
-      <Section title={t("settings.general")}>
+      <Section title={t("settings.general")} collapsible defaultOpen={false}>
         <Field label={t("settings.language")}>
           <Select<Language>
             value={settings.language ?? info.systemLanguage}
@@ -95,7 +123,7 @@ export function SettingsPage() {
         </Field>
       </Section>
 
-      <Section title={t("settings.hotkeys")}>
+      <Section title={t("settings.hotkeys")} collapsible defaultOpen={false}>
         <HotkeyField
           label={t("settings.hotkeyStartStop")}
           value={settings.hotkeyStartStop}
@@ -114,7 +142,7 @@ export function SettingsPage() {
         <div className="field-hint">{locked ? t("settings.hotkeysLocked") : t("settings.hotkeyHint")}</div>
       </Section>
 
-      <Section title={t("settings.startStop")}>
+      <Section title={t("settings.startStop")} collapsible defaultOpen={false}>
         <Field
           label={t("settings.countdown")}
           hint={t("settings.countdownHint", { max: MAX_COUNTDOWN_SEC })}
@@ -139,7 +167,7 @@ export function SettingsPage() {
         />
       </Section>
 
-      <Section title={t("settings.app")}>
+      <Section title={t("settings.app")} collapsible defaultOpen={false}>
         <CheckRow
           checked={autostart ?? false}
           disabled={autostart === null}
@@ -167,16 +195,96 @@ export function SettingsPage() {
         />
       </Section>
 
-      <Section title={t("settings.blocked")}>
+      <Section title={t("settings.harnessTitle")} collapsible defaultOpen={false}>
+        <CheckRow
+          checked={settings.harness}
+          label={t("settings.harness")}
+          hint={t("settings.harnessHint")}
+          onChange={(harness) => void saveSettings({ ...settings, harness })}
+        />
+        <CheckRow
+          checked={settings.harnessAutoRun}
+          label={t("settings.harnessAutoRun")}
+          hint={t("settings.harnessAutoRunHint")}
+          onChange={(harnessAutoRun) => void saveSettings({ ...settings, harnessAutoRun })}
+        />
+        <Field label={t("settings.agentEndpoint")} hint={t("settings.agentKeyHint")}>
+          <TextInput
+            value={endpoint}
+            onChange={setEndpoint}
+            onBlur={() => saveAgent(endpoint, model)}
+            spellCheck={false}
+          />
+        </Field>
+        <div className="settings-presets">
+          <Button
+            small
+            onClick={() => saveAgent(OLLAMA_ENDPOINT, model)}
+          >
+            {t("settings.agentPresetOllama")}
+          </Button>
+          <Button
+            small
+            onClick={() => saveAgent(LM_STUDIO_ENDPOINT, model)}
+          >
+            {t("settings.agentPresetLmStudio")}
+          </Button>
+        </div>
+        <Field label={t("settings.agentModel")}>
+          <TextInput
+            value={model}
+            onChange={setModel}
+            onBlur={() => saveAgent(endpoint, model)}
+            spellCheck={false}
+          />
+        </Field>
+        <Field label={t("settings.agentKey")} hint={keySet ? t("settings.agentKeySaved") : undefined}>
+          <TextInput
+            type="password"
+            value={key}
+            onChange={setKey}
+            spellCheck={false}
+            autoComplete="off"
+            onBlur={() => {
+              const next = key.trim();
+              if (!next) {
+                return;
+              }
+              void api
+                .agentKeySet(next)
+                .then(() => {
+                  setKey("");
+                  setKeySet(true);
+                })
+                .catch(showError);
+            }}
+          />
+        </Field>
+        {keySet ? (
+          <Button
+            small
+            onClick={() => {
+              void api
+                .agentKeySet("")
+                .then(() => setKeySet(false))
+                .catch(showError);
+            }}
+          >
+            {t("settings.agentKeyClear")}
+          </Button>
+        ) : null}
+      </Section>
+
+      <Section title={t("settings.blocked")} collapsible defaultOpen={false}>
         <BlockedProcesses />
       </Section>
 
-      <Section title={t("settings.noticeTitle")}>
+      <Section title={t("settings.noticeTitle")} collapsible defaultOpen={false}>
         <p className="settings-text">{t("settings.noticePresence")}</p>
         <p className="settings-text">{t("settings.noticeAdmin")}</p>
       </Section>
 
-      <Section title={t("settings.data")}>
+      <Section title={t("settings.data")} collapsible defaultOpen={false}>
         <Field label={t("settings.dataDir")}>
           <span className="settings-path">{info.dataDir}</span>
         </Field>
