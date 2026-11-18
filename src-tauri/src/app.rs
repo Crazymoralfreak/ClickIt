@@ -881,6 +881,8 @@ impl Host for Core {
 /// Creates the core, the tray icon and the scheduler thread, registers the
 /// hotkey and shows the main window unless started by the autostart entry.
 pub fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    // Before the window opens, so the Assistant page can already see clickit-mcp.exe.
+    crate::external::place_bundled_mcp();
     let core = Core::create(app)?;
     core.journal.add("appStart", &[("version", app.package_info().version.to_string())]);
     tray::create(app, tray_menu)?;

@@ -68,9 +68,11 @@ jobs:
           if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
             throw "The secret TAURI_SIGNING_PRIVATE_KEY is not set: the installer cannot be signed"
           }
-          # clickit-mcp is a sidecar. The release config expects the file under
-          # src-tauri/binaries with the target triple in the name. A local
-          # tauri dev does not use that config and does not need the file.
+          # clickit-mcp is built first. The installer copies it next to ClickIt.
+          # The same file is compiled into the executable, so a portable copy
+          # writes clickit-mcp.exe beside itself on startup. The release config
+          # expects the file under src-tauri/binaries with the target triple in
+          # the name. A local tauri build does not use that config.
           cargo build --release --manifest-path src-tauri/Cargo.toml --bin clickit-mcp
           if ($LASTEXITCODE -ne 0) {
             throw "clickit-mcp was not built"

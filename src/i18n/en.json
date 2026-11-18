@@ -764,7 +764,7 @@
     "connectRun": "In the settings, in the Assistant block, turn on \"Allow external connections\". Leave ClickIt running afterwards: the pipe works only while the application is open.",
     "connectClient": "This is an external program with its own model. ClickIt does not start it. The program starts clickit-mcp itself and sends requests through it.",
     "connectPath": "Replace an empty \"mcpServers\": {} with the text below. The path already points at clickit-mcp next to this copy of ClickIt. If mcpServers already lists other servers, copy only the clickit entry and add it beside them.",
-    "connectMissing": "clickit-mcp.exe is not next to this copy of ClickIt. Put it in the same folder: the path in the text already points there.",
+    "connectMissing": "clickit-mcp.exe is not next to this copy of ClickIt. A released build places it in the same folder when it starts. If it is still missing after a restart, put the file there yourself: the path in the text already points there.",
     "connectCopy": "Copy",
     "connectCopyEntry": "Copy only clickit",
     "connectCopied": "Copied",

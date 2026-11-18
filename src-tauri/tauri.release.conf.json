@@ -1,4 +1,7 @@
 {
+  "build": {
+    "features": ["bundle-mcp"]
+  },
   "bundle": {
     "createUpdaterArtifacts": true,
     "externalBin": ["binaries/clickit-mcp"]

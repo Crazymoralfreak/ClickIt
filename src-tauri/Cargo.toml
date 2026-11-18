@@ -1,12 +1,17 @@
 [package]
 name = "clickit"
-version = "1.0.0"
+version = "1.0.1"
 description = "ClickIt - desktop auto clicker for Windows"
 authors = ["Mityy"]
 license = "MIT"
 edition = "2021"
 rust-version = "1.85"
 default-run = "clickit"
+
+[features]
+# Release builds embed clickit-mcp and write it next to the executable.
+# A local build leaves this off and does not need the sidecar file.
+bundle-mcp = []
 
 [lib]
 name = "clickit_lib"

@@ -420,12 +420,45 @@ pub fn mcp_snippet(mcp_path: &std::path::Path, found: bool) -> McpSnippet {
 
 /// Path of `clickit-mcp.exe` next to the running ClickIt.
 pub fn running_mcp_snippet() -> McpSnippet {
-    let path = std::env::current_exe()
-        .ok()
-        .map(|exe| exe.with_file_name("clickit-mcp.exe"))
-        .unwrap_or_else(|| std::path::PathBuf::from("clickit-mcp.exe"));
+    let path = mcp_path();
     let found = path.is_file();
     mcp_snippet(&path, found)
+}
+
+/// Writes the copy of `clickit-mcp.exe` that a release build carries, next to this executable.
+/// The installer also places that file. A matching file is left untouched.
+pub fn place_bundled_mcp() {
+    let Some(bundled) = bundled_mcp_bytes() else {
+        return;
+    };
+    let path = mcp_path();
+    let existing = std::fs::read(&path).ok();
+    if !mcp_needs_write(existing.as_deref(), bundled) {
+        return;
+    }
+    let _ = std::fs::write(path, bundled);
+}
+
+fn mcp_path() -> std::path::PathBuf {
+    std::env::current_exe()
+        .ok()
+        .map(|exe| exe.with_file_name("clickit-mcp.exe"))
+        .unwrap_or_else(|| std::path::PathBuf::from("clickit-mcp.exe"))
+}
+
+fn bundled_mcp_bytes() -> Option<&'static [u8]> {
+    #[cfg(feature = "bundle-mcp")]
+    {
+        Some(include_bytes!("../binaries/clickit-mcp-x86_64-pc-windows-msvc.exe"))
+    }
+    #[cfg(not(feature = "bundle-mcp"))]
+    {
+        None
+    }
+}
+
+fn mcp_needs_write(existing: Option<&[u8]>, bundled: &[u8]) -> bool {
+    existing.is_none_or(|bytes| bytes != bundled)
 }
 
 fn point_label(params: &Value) -> String {
@@ -456,6 +489,18 @@ mod tests {
         let noted = note("en", "capture_screen", &json!({}), &Err(AppError::new("busy")));
         assert_eq!(noted.result, "A run or a recording is in progress. Stop it first.");
         assert!(noted.image_png.is_none());
+    }
+
+    #[test]
+    fn a_dev_build_does_not_carry_clickit_mcp() {
+        assert!(bundled_mcp_bytes().is_none());
+    }
+
+    #[test]
+    fn an_unchanged_sidecar_is_left_alone() {
+        assert!(!mcp_needs_write(Some(b"same"), b"same"));
+        assert!(mcp_needs_write(None, b"same"));
+        assert!(mcp_needs_write(Some(b"old"), b"same"));
     }
 
     #[test]
