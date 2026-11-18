@@ -117,7 +117,8 @@
     "pending": "A start request is already open. Answer it or wait.",
     "agentUnconfigured": "Set the address and the model name in the settings.",
     "agentBusy": "The assistant is still answering the previous message.",
-    "agentFailed": "The request to the model failed: {message}"
+    "agentFailed": "The request to the model failed: {message}",
+    "dialogOpen": "This connection is still open. The tab can be removed after the external program disconnects."
   },
   "issues": {
     "nameEmpty": "Empty name",
@@ -177,15 +178,15 @@
       "updateFound": "A new version {version} was found",
       "updateInstall": "Version {version} is being installed, ClickIt is restarting",
       "updateFailed": "Version {version} was not installed: {message}",
-      "harnessCapture": "The harness captured an image {width}×{height}",
-      "harnessTemplate": "The harness saved template {file} for scenario {scenario}"
+      "harnessCapture": "The assistant captured an image {width}×{height}",
+      "harnessTemplate": "The assistant saved template {file} for scenario {scenario}"
     },
     "sources": {
       "manual": "manual",
       "hotkey": "hotkey",
       "tray": "tray",
       "schedule": "schedule",
-      "harness": "harness"
+      "harness": "assistant"
     },
     "outcomes": {
       "completed": "completed",
@@ -579,11 +580,11 @@
     "catchUpHint": "The start is run once, and only if less than 12 hours have passed since the missed time.",
     "checkUpdates": "Check for updates at startup",
     "checkUpdatesHint": "ClickIt asks GitHub whether a new version is out. An update that is found is downloaded and installed by itself when no run or recording is in progress; ClickIt starts again afterwards. With the box unticked, ClickIt does not contact GitHub by itself. Requests from the assistant to a model are set separately.",
-    "harnessTitle": "Harness and assistant",
-    "harness": "Allow harness connections",
-    "harnessHint": "While this is on, clickit-mcp can connect to this ClickIt over a local pipe. The harness receives screenshots and decides itself whether to send them to its model. Actions from that connection show on the Assistant page, on the Connections tab. Turning the box off closes the pipe and the screenshots.",
+    "harnessTitle": "Assistant",
+    "harness": "Allow external connections",
+    "harnessHint": "While this is on, clickit-mcp can connect to this ClickIt over a local pipe. The connected program receives screenshots and decides itself whether to send them to its model. Actions from that connection show on the Assistant page, on the Connections tab. Turning the box off closes the pipe and the screenshots.",
     "harnessAutoRun": "Start scenarios without confirmation",
-    "harnessAutoRunHint": "While this is off, both clickit-mcp and the assistant ask in the ClickIt window before a scenario starts. When it is on, the application presses keys by itself, after the countdown. Stopping still needs no question.",
+    "harnessAutoRunHint": "While this is off, both clickit-mcp and the Assistant page ask in the ClickIt window before a scenario starts. When it is on, the application presses keys by itself, after the countdown. Stopping still needs no question.",
     "agentEndpoint": "Model address",
     "agentModel": "Model name",
     "agentKey": "API key",
@@ -680,13 +681,13 @@
       "release": "On a stop, held mouse buttons and keys are released."
     },
     "harness": {
-      "title": "Harness and assistant",
+      "title": "Assistant",
       "intro": "A scenario can be built without doing it by hand. An external program connects through clickit-mcp, and the Assistant page talks to a model inside ClickIt. Both entrances call the same core actions.",
-      "mcp": "A harness starts clickit-mcp itself and speaks MCP to it. It brings its own model. The pipe is local and is open only while \"Allow harness connections\" is on. ClickIt does not write the harness settings file: the path to clickit-mcp.exe is set there. An example is in the README. Actions show on the Assistant page, on the Connections tab. The words of the chat stay with the harness.",
+      "mcp": "An external program starts clickit-mcp itself and speaks MCP to it. It brings its own model. The pipe is local and is open only while \"Allow external connections\" is on in the Assistant block. ClickIt does not write that program's settings file: the path to clickit-mcp.exe is set there. An example is in the README. Actions show on the Assistant page, on the Connections tab. The words of the chat stay with the external program. The cross on a tab drops a closed connection. An open one stays until the program disconnects.",
       "assistant": "On the Assistant page ClickIt calls the model address from the settings. The address presets are Ollama and LM Studio. A cloud model uses its own address and key. An empty address means the page does not use the network.",
-      "shots": "With the connection on, the harness receives screenshots. The Assistant page sends screenshots and scenario text to the model address. There is no separate question for each shot.",
+      "shots": "With the connection on, the external program receives screenshots. The Assistant page sends screenshots and scenario text to the model address. There is no separate question for each shot.",
       "autoRun": "Starting without confirmation is off by default. While the box is unticked, both MCP and the assistant wait for an answer in the ClickIt window. Stopping asks no question.",
-      "missing": "This version has no queue, schedule, mouse and keyboard recording, or scenario deletion through the harness."
+      "missing": "This version has no queue, schedule, mouse and keyboard recording, or scenario deletion through an external connection."
     },
     "tray": {
       "title": "Tray and schedule",
@@ -742,7 +743,7 @@
   },
   "harness": {
     "confirmTitle": "Start a scenario",
-    "confirmText": "A harness asks to start \"{name}\".",
+    "confirmText": "The assistant asks to start \"{name}\".",
     "confirmOk": "Start"
   },
   "agent": {
@@ -756,16 +757,18 @@
     "local": "Model",
     "connections": "Connections",
     "connectionsEmpty": "No calls yet.",
-    "connectionsNotice": "The words of the chat stay with the harness. Here are the ClickIt actions for \"{client}\".",
-    "connectTitle": "How to connect a harness",
-    "connectRun": "In the settings, turn on \"Allow harness connections\". Leave ClickIt running afterwards: the pipe works only while the application is open.",
-    "connectClient": "A harness is an external program with its own model. ClickIt does not start it. The harness starts clickit-mcp itself and sends requests through it.",
+    "connectionsNotice": "The words of the chat stay with the external program. Here are the ClickIt actions for \"{client}\".",
+    "connectionForget": "Close tab",
+    "connectionOpen": "This connection is still open. The tab can be removed after the external program disconnects.",
+    "connectTitle": "How to connect",
+    "connectRun": "In the settings, in the Assistant block, turn on \"Allow external connections\". Leave ClickIt running afterwards: the pipe works only while the application is open.",
+    "connectClient": "This is an external program with its own model. ClickIt does not start it. The program starts clickit-mcp itself and sends requests through it.",
     "connectPath": "Replace an empty \"mcpServers\": {} with the text below. The path already points at clickit-mcp next to this copy of ClickIt. If mcpServers already lists other servers, copy only the clickit entry and add it beside them.",
     "connectMissing": "clickit-mcp.exe is not next to this copy of ClickIt. Put it in the same folder: the path in the text already points there.",
     "connectCopy": "Copy",
     "connectCopyEntry": "Copy only clickit",
     "connectCopied": "Copied",
-    "connectSee": "Lines appear here when the harness calls an action: list, edit, screenshot, or start. Until there is a call, the list stays empty.",
+    "connectSee": "Lines appear here when the external program calls an action: list, edit, screenshot, or start. Until there is a call, the list stays empty.",
     "role": {
       "user": "You",
       "assistant": "Model",

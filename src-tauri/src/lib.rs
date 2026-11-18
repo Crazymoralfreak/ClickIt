@@ -61,6 +61,7 @@ pub fn run() {
             commands::agent_history,
             commands::agent_send,
             commands::harness_dialogs,
+            commands::harness_dialog_forget,
             commands::harness_mcp_snippet,
             commands::scenario_list,
             commands::scenario_get,

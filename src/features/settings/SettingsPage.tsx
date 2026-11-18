@@ -110,7 +110,7 @@ export function SettingsPage() {
 
   return (
     <PageFrame title={t("nav.settings")}>
-      <Section title={t("settings.general")}>
+      <Section title={t("settings.general")} collapsible defaultOpen={false}>
         <Field label={t("settings.language")}>
           <Select<Language>
             value={settings.language ?? info.systemLanguage}
@@ -123,7 +123,7 @@ export function SettingsPage() {
         </Field>
       </Section>
 
-      <Section title={t("settings.hotkeys")}>
+      <Section title={t("settings.hotkeys")} collapsible defaultOpen={false}>
         <HotkeyField
           label={t("settings.hotkeyStartStop")}
           value={settings.hotkeyStartStop}
@@ -142,7 +142,7 @@ export function SettingsPage() {
         <div className="field-hint">{locked ? t("settings.hotkeysLocked") : t("settings.hotkeyHint")}</div>
       </Section>
 
-      <Section title={t("settings.startStop")}>
+      <Section title={t("settings.startStop")} collapsible defaultOpen={false}>
         <Field
           label={t("settings.countdown")}
           hint={t("settings.countdownHint", { max: MAX_COUNTDOWN_SEC })}
@@ -167,7 +167,7 @@ export function SettingsPage() {
         />
       </Section>
 
-      <Section title={t("settings.app")}>
+      <Section title={t("settings.app")} collapsible defaultOpen={false}>
         <CheckRow
           checked={autostart ?? false}
           disabled={autostart === null}
@@ -195,7 +195,7 @@ export function SettingsPage() {
         />
       </Section>
 
-      <Section title={t("settings.harnessTitle")}>
+      <Section title={t("settings.harnessTitle")} collapsible defaultOpen={false}>
         <CheckRow
           checked={settings.harness}
           label={t("settings.harness")}
@@ -275,16 +275,16 @@ export function SettingsPage() {
         ) : null}
       </Section>
 
-      <Section title={t("settings.blocked")}>
+      <Section title={t("settings.blocked")} collapsible defaultOpen={false}>
         <BlockedProcesses />
       </Section>
 
-      <Section title={t("settings.noticeTitle")}>
+      <Section title={t("settings.noticeTitle")} collapsible defaultOpen={false}>
         <p className="settings-text">{t("settings.noticePresence")}</p>
         <p className="settings-text">{t("settings.noticeAdmin")}</p>
       </Section>
 
-      <Section title={t("settings.data")}>
+      <Section title={t("settings.data")} collapsible defaultOpen={false}>
         <Field label={t("settings.dataDir")}>
           <span className="settings-path">{info.dataDir}</span>
         </Field>

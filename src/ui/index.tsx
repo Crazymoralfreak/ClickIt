@@ -381,12 +381,40 @@ export function PageFrame({ title, actions, children }: { title: string; actions
   );
 }
 
-/** Titled group of fields inside a page. */
-export function Section({ title, children }: { title?: string; children: ReactNode }) {
+/** Titled group of fields inside a page. A collapsible group starts closed and opens on a click of its title. */
+export function Section({
+  title,
+  children,
+  collapsible = false,
+  defaultOpen = true,
+}: {
+  title?: string;
+  children: ReactNode;
+  collapsible?: boolean;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  const shown = !collapsible || !title || open;
   return (
-    <section className="section">
-      {title ? <h2 className="section-title">{title}</h2> : null}
-      {children}
+    <section className={cx("section", collapsible && !open && "section-collapsed")}>
+      {title ? (
+        collapsible ? (
+          <h2 className="section-title">
+            <button
+              type="button"
+              className="section-toggle"
+              aria-expanded={open}
+              onClick={() => setOpen((current) => !current)}
+            >
+              <span className={open ? "section-mark section-mark-open" : "section-mark"} aria-hidden="true" />
+              {title}
+            </button>
+          </h2>
+        ) : (
+          <h2 className="section-title">{title}</h2>
+        )
+      ) : null}
+      {shown ? children : null}
     </section>
   );
 }

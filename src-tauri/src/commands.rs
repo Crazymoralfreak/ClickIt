@@ -123,6 +123,12 @@ pub fn harness_dialogs(core: CoreState<'_>) -> Vec<Dialog> {
     crate::external::list(core.inner())
 }
 
+/// Removes one closed harness connection from the Assistant page.
+#[tauri::command(async)]
+pub fn harness_dialog_forget(core: CoreState<'_>, id: u64) -> AppResult<()> {
+    crate::external::forget(core.inner(), id)
+}
+
 /// Ready MCP text for this copy of ClickIt. The path points at `clickit-mcp.exe` beside it.
 #[tauri::command(async)]
 pub fn harness_mcp_snippet() -> McpSnippet {

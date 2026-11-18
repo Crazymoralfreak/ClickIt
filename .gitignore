@@ -8,3 +8,4 @@ src-tauri/icons/ios/
 *.log
 .DS_Store
 Thumbs.db
+.cursor/

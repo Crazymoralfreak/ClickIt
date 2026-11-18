@@ -114,6 +114,8 @@ export const api = {
   agentSend: (text: string) => invoke<void>("agent_send", { text }),
   /** Tool-call dialogs from MCP clients. The words of those chats are not included. */
   harnessDialogs: () => invoke<HarnessDialog[]>("harness_dialogs"),
+  /** Drops a closed connection tab. An open connection is refused. */
+  harnessDialogForget: (id: number) => invoke<void>("harness_dialog_forget", { id }),
   /** MCP text with the path of clickit-mcp.exe next to this copy of ClickIt. */
   harnessMcpSnippet: () => invoke<McpSnippet>("harness_mcp_snippet"),
 

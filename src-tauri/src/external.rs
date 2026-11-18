@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 
 use crate::app::Core;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::shell::text::{error_text, text};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -149,6 +149,59 @@ pub fn list(core: &Core) -> Vec<Dialog> {
     let mut inner = lock(core);
     ensure_loaded(core, &mut inner);
     inner.dialogs.clone()
+}
+
+/// Drops a closed connection and its lines. An open connection stays: the pipe is still writing to it.
+pub fn forget(core: &Core, session_id: u64) -> AppResult<()> {
+    let mut inner = lock(core);
+    ensure_loaded(core, &mut inner);
+    let Some(removed) = take_closed(&mut inner.dialogs, session_id)? else {
+        return Ok(());
+    };
+    if let Err(error) = write_dialogs(&core.store.harness_dialog_path(), &inner.dialogs) {
+        inner.dialogs.insert(removed.0, removed.1);
+        return Err(error);
+    }
+    Ok(())
+}
+
+/// Removes a closed dialog. `None` when that id is already gone. An open dialog is left in place.
+fn take_closed(dialogs: &mut Vec<Dialog>, session_id: u64) -> AppResult<Option<(usize, Dialog)>> {
+    let Some(index) = dialogs.iter().position(|dialog| dialog.id == session_id) else {
+        return Ok(None);
+    };
+    if dialogs[index].open {
+        return Err(AppError::new("dialogOpen"));
+    }
+    Ok(Some((index, dialogs.remove(index))))
+}
+
+fn journal_text(dialogs: &[Dialog]) -> AppResult<String> {
+    let mut body = String::new();
+    for dialog in dialogs {
+        for entry in &dialog.entries {
+            let stored = StoredLine {
+                session: dialog.id,
+                client: dialog.client.clone(),
+                id: entry.id,
+                role: entry.role,
+                text: entry.text.clone(),
+            };
+            body.push_str(&serde_json::to_string(&stored)?);
+            body.push('\n');
+        }
+    }
+    Ok(body)
+}
+
+fn write_dialogs(path: &std::path::Path, dialogs: &[Dialog]) -> AppResult<()> {
+    let temp = path.with_extension("tmp");
+    fs::write(&temp, journal_text(dialogs)?)?;
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    fs::rename(&temp, path)?;
+    Ok(())
 }
 
 struct Noted {
@@ -409,6 +462,38 @@ mod tests {
     fn an_empty_client_name_is_mcp() {
         assert_eq!(client_name("  "), "MCP");
         assert_eq!(client_name("Client\n"), "Client");
+    }
+
+    fn sample(id: u64, open: bool, text: &str) -> Dialog {
+        Dialog {
+            id,
+            client: "cursor-vscode".to_string(),
+            open,
+            entries: vec![DialogEntry { id, role: DialogRole::Call, text: text.to_string(), image_png: None }],
+        }
+    }
+
+    #[test]
+    fn a_closed_dialog_drops_out_of_the_file() {
+        let dir = std::env::temp_dir().join(format!("clickit-dialogs-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("harness.jsonl");
+        let mut dialogs = vec![sample(1, false, "one"), sample(2, false, "two")];
+        let removed = take_closed(&mut dialogs, 1).unwrap();
+        assert!(removed.is_some());
+        write_dialogs(&path, &dialogs).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("\"session\":1"));
+        assert!(text.contains("two"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_open_dialog_stays() {
+        let mut dialogs = vec![sample(1, true, "live")];
+        let error = take_closed(&mut dialogs, 1).unwrap_err();
+        assert_eq!(error.code, "dialogOpen");
+        assert_eq!(dialogs.len(), 1);
     }
 
     #[test]

@@ -38,6 +38,57 @@
   margin-bottom: 12px;
 }
 
+.assistant-connections {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+}
+
+.assistant-tab {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.assistant-tab-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.assistant-tab-label,
+.assistant-tab-close {
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.assistant-tab-label {
+  padding: 5px 2px 5px 12px;
+}
+
+.assistant-tab-close {
+  padding: 5px 8px 5px 4px;
+  color: var(--text-dim);
+  line-height: 1;
+}
+
+.assistant-tab-active .assistant-tab-close {
+  color: var(--accent);
+}
+
+.assistant-tab-close:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .assistant-hint,
 .assistant-empty {
   color: var(--text-dim);

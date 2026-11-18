@@ -146,7 +146,7 @@ export function AssistantPage() {
 
   return (
     <PageFrame title={t("nav.assistant")}>
-      <Section title={t("agent.connectTitle")}>
+      <Section title={t("agent.connectTitle")} collapsible defaultOpen={false}>
         <ol className="assistant-steps">
           <li>
             {t("agent.connectRun")}{" "}
@@ -182,15 +182,37 @@ export function AssistantPage() {
             { value: "external", label: t("agent.connections") },
           ]}
         />
-        {view === "external" && dialogs.length > 1 ? (
-          <Segmented
-            value={String(selected?.id ?? "")}
-            onChange={(value) => setSelectedId(Number(value))}
-            options={dialogs.map((dialog) => ({
-              value: String(dialog.id),
-              label: sessionLabel(dialog, dialogs),
-            }))}
-          />
+        {view === "external" && dialogs.length > 0 ? (
+          <div className="assistant-connections" role="tablist">
+            {dialogs.map((dialog) => (
+              <div
+                key={dialog.id}
+                className={dialog.id === selected?.id ? "assistant-tab assistant-tab-active" : "assistant-tab"}
+              >
+                <button type="button" role="tab" className="assistant-tab-label" onClick={() => setSelectedId(dialog.id)}>
+                  {sessionLabel(dialog, dialogs)}
+                </button>
+                <button
+                  type="button"
+                  className="assistant-tab-close"
+                  aria-label={t("agent.connectionForget")}
+                  title={dialog.open ? t("agent.connectionOpen") : t("agent.connectionForget")}
+                  disabled={dialog.open}
+                  onClick={() => {
+                    void api.harnessDialogForget(dialog.id).then(
+                      () => {
+                        setDialogs((current) => current.filter((item) => item.id !== dialog.id));
+                        setSelectedId((current) => (current === dialog.id ? null : current));
+                      },
+                      (error: unknown) => showError(error),
+                    );
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
         ) : null}
       </div>
       {view === "local" && !configured ? (
