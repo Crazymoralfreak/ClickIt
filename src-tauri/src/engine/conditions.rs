@@ -1,11 +1,20 @@
 //! Geometry shared by the conditions and the capture tools.
 
-use crate::error::AppError;
+use std::path::Path;
+use std::time::Instant;
+
+use serde::Serialize;
+
+use crate::error::{AppError, AppResult};
 use crate::input;
-use crate::model::scenario::{Area, CoordSpace, WindowTarget};
+use crate::model::scenario::{Area, Condition, CoordSpace, Position, ScenarioMode, WindowTarget};
+use crate::model::validate::parse_color;
 use crate::runtime::{CaptureResult, Rect};
-use crate::screen;
+use crate::screen::{self, Template};
 use crate::target;
+
+/// Thresholds "Check now" falls back to when an image is not found at its own one.
+const LOWER_THRESHOLDS: [f64; 6] = [0.9, 0.85, 0.8, 0.7, 0.6, 0.5];
 
 /// Search area of an image condition in virtual-screen pixels. `client` is the
 /// client area of the target window, when the scenario has one. `None` means
@@ -49,6 +58,97 @@ pub fn capture_point(target: Option<&WindowTarget>) -> CaptureResult {
         }
     }
     result
+}
+
+/// What one look at a condition showed. Nothing is clicked.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CheckResult {
+    /// Whether the condition holds right now.
+    pub holds: bool,
+    /// For an image: whether it is on the screen, whatever the condition asks for.
+    pub found: Option<bool>,
+    /// Centre of the found image, in virtual-screen pixels.
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    /// The same point inside the target window, in the "Window" mode.
+    pub client_x: Option<i32>,
+    pub client_y: Option<i32>,
+    /// Similarity of the found image, 0..=1.
+    pub score: Option<f64>,
+    /// Set when the image is not found at its threshold but would be at this similarity.
+    pub would_match_at: Option<f64>,
+    /// For a pixel: the colour that is there now.
+    pub color: Option<String>,
+    /// How long the look took.
+    pub ms: u64,
+}
+
+/// Whether the look needs the screen, so the caller takes the ClickIt window out of the way.
+pub fn needs_screen(condition: &Condition) -> bool {
+    match condition {
+        Condition::Pixel { .. } | Condition::ImageFound { .. } | Condition::ImageGone { .. } => true,
+        Condition::Window { .. } | Condition::Process { .. } => false,
+    }
+}
+
+/// Looks at a condition once, the way a run does. `dir` is the folder with
+/// the template images. In the "Window" mode the target window has to exist.
+pub fn check_now(mode: ScenarioMode, window: &WindowTarget, condition: &Condition, dir: &Path) -> AppResult<CheckResult> {
+    let started = Instant::now();
+    let client = match mode {
+        ScenarioMode::Screen => None,
+        ScenarioMode::Window => Some(
+            target::find_target(window)
+                .and_then(target::client_rect)
+                .ok_or_else(|| AppError::new("targetNotFound").with("target", target::describe_target(window)))?,
+        ),
+    };
+    let mut result = CheckResult::default();
+    match condition {
+        Condition::Pixel { point, color, tolerance } => {
+            let (x, y) = match (point, client) {
+                (Position::Absolute { x, y }, _) => (*x, *y),
+                (Position::Client { x, y }, Some(client)) => (client.x + *x, client.y + *y),
+                (Position::Client { .. }, None) => return Err(AppError::new("invalid")),
+                (Position::Cursor, _) => input::cursor_pos(),
+            };
+            let actual = screen::pixel(x, y)?;
+            let wanted = parse_color(color).ok_or_else(|| AppError::new("invalid"))?;
+            result.holds = screen::color_within(actual, wanted, (*tolerance).clamp(0, 255) as u8);
+            result.color = Some(screen::color_text(actual));
+            result.x = Some(x);
+            result.y = Some(y);
+        }
+        Condition::ImageFound { template, area, threshold } | Condition::ImageGone { template, area, threshold } => {
+            let template = Template::load(&dir.join(template))?;
+            let rect = area_rect(area, screen::virtual_screen(), client).ok_or_else(|| AppError::new("captureFailed"))?;
+            let frame = screen::capture(rect)?;
+            let found = screen::find_template_scored(&frame, &template, *threshold);
+            if let Some(((left, top), score)) = found {
+                let x = frame.rect.x + left + template.width / 2;
+                let y = frame.rect.y + top + template.height / 2;
+                result.x = Some(x);
+                result.y = Some(y);
+                result.client_x = client.map(|client| x - client.x);
+                result.client_y = client.map(|client| y - client.y);
+                result.score = Some(score);
+            } else {
+                // Tell at which similarity the picture would have been found.
+                result.would_match_at = LOWER_THRESHOLDS
+                    .iter()
+                    .filter(|lower| **lower < *threshold)
+                    .find_map(|lower| screen::find_template_scored(&frame, &template, *lower))
+                    .map(|(_, score)| score);
+            }
+            result.found = Some(found.is_some());
+            result.holds = found.is_some() == matches!(condition, Condition::ImageFound { .. });
+        }
+        Condition::Window { title, title_match } => result.holds = target::window_exists(title, *title_match),
+        Condition::Process { name } => result.holds = target::process_running(name),
+    }
+    result.ms = started.elapsed().as_millis() as u64;
+    Ok(result)
 }
 
 #[cfg(test)]

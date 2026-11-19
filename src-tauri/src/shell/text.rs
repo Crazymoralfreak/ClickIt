@@ -55,8 +55,12 @@ pub fn status_text(lang: &str, status: &RunStatus) -> String {
         RunState::PausedProcess => {
             text(lang, "status.pausedProcess", &[("process", status.blocked_process.as_deref().unwrap_or(""))])
         }
+        RunState::PausedBreak => text(lang, "status.pausedBreak", &[]),
         RunState::Recording if status.recording.as_ref().is_some_and(|recording| recording.paused) => {
             text(lang, "status.recordingPaused", &[])
+        }
+        RunState::Recording if status.recording.as_ref().is_some_and(|recording| recording.held) => {
+            text(lang, "status.recordingHeld", &[])
         }
         RunState::Recording => text(lang, "status.recording", &[]),
     };
@@ -87,6 +91,8 @@ mod tests {
         "native.notify.startFailed",
         "native.notify.runFailed",
         "native.notify.recordStopped",
+        "native.notify.recordImage",
+        "native.notify.recordImageText",
         "native.notify.named",
         "native.notify.updateAvailable",
         "native.notify.updateAvailableText",
@@ -101,10 +107,13 @@ mod tests {
         "status.waiting",
         "status.pausedWindow",
         "status.pausedProcess",
+        "status.pausedBreak",
         "status.recording",
         "status.recordingPaused",
+        "status.recordingHeld",
         "journal.recordReasons.timeLimit",
         "journal.recordReasons.stepLimit",
+        "scenarios.canvasCopyName",
         "errors.unknown",
     ];
 
@@ -148,6 +157,18 @@ mod tests {
         "agentUnconfigured",
         "agentBusy",
         "agentFailed",
+        "dialogOpen",
+        "chatBusy",
+        "chatMissing",
+        "alreadyCanvas",
+        "backupMissing",
+        "formatMismatch",
+        "callMissing",
+        "callTooDeep",
+        "extractEmpty",
+        "extractEntry",
+        "extractManyEntries",
+        "extractManyExits",
     ];
 
     #[test]

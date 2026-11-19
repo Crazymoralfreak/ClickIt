@@ -16,8 +16,14 @@ export function statusHeadline(status: RunStatus, { t }: Translator): string {
       return t("status.pausedWindow");
     case "pausedProcess":
       return t("status.pausedProcess", { process: status.blockedProcess ?? "" });
+    case "pausedBreak":
+      return t("status.pausedBreak");
     case "recording":
-      return status.recording?.paused ? t("status.recordingPaused") : t("status.recording");
+      return status.recording?.held
+        ? t("status.recordingHeld")
+        : status.recording?.paused
+          ? t("status.recordingPaused")
+          : t("status.recording");
     default: {
       const unreachable: never = status.state;
       throw new Error(`Unknown run state: ${String(unreachable)}`);

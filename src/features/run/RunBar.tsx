@@ -74,6 +74,16 @@ export function RunBar() {
           ) : null}
         </select>
       </label>
+      {status.state === "pausedBreak" ? (
+        <>
+          <Button onClick={() => void api.runStep().catch(showError)}>
+            {t("run.step")} ({settings.hotkeyStep})
+          </Button>
+          <Button onClick={() => void api.runContinue().catch(showError)}>
+            {t("run.continue")} ({settings.hotkeyContinue})
+          </Button>
+        </>
+      ) : null}
       {locked ? (
         <Button variant="danger" onClick={() => void stop()}>
           {t("run.stop")} ({settings.hotkeyStartStop})

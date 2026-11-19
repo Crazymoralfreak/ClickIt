@@ -185,6 +185,115 @@ export type Step =
 export type StepType = Step["type"];
 export type RepeatableStep = ClickStep | MoveStep | DragStep | ScrollStep | KeyStep | TextStep | PauseStep;
 
+// The canvas form of a scenario. Mirror of src-tauri/src/model/graph.rs.
+
+export const MAX_INTERCEPTS = 8;
+export const DEFAULT_INTERCEPT_MS = 2000;
+export const MIN_INTERCEPT_MS = 500;
+/** Size of a block on the canvas. */
+export const BLOCK_WIDTH = 220;
+export const BLOCK_HEIGHT = 84;
+
+/** An output of a block. One link may leave it. */
+export type Port = "next" | "timeout" | "yes" | "no" | "body" | "done";
+
+/** What a block has on top of the fields of a step. */
+interface NodeExtra {
+  /** The user's own name of the block, shown instead of its type. */
+  title?: string;
+  /** A block saved without a position is placed by the automatic layout. */
+  x?: number;
+  y?: number;
+}
+
+interface NodeBase extends StepBase, NodeExtra {}
+
+/** Action blocks carry the same fields as the steps of a list. */
+export type ActionNode = (RepeatableStep | StopStep) & NodeExtra;
+
+/** Where a pass begins. Exactly one per graph. */
+export interface StartNode extends NodeBase {
+  type: "start";
+}
+
+/** Outputs `next` and `timeout`. An unwired `timeout` fails the scenario. */
+export interface WaitNode extends NodeBase {
+  type: "wait";
+  condition: Condition;
+  pollMs: number;
+  timeoutMs: number;
+  onFound: OnFound;
+}
+
+/** Outputs `yes` and `no`. `timeoutMs` 0 checks the condition once, right away. */
+export interface BranchNode extends NodeBase {
+  type: "branch";
+  condition: Condition;
+  pollMs: number;
+  timeoutMs: number;
+}
+
+/** Lets the pass into `body` the given number of times, then into `done`. */
+export interface CounterNode extends NodeBase {
+  type: "counter";
+  times: number;
+  pauseBetween: Pause;
+}
+
+/** Runs one pass of another scenario. */
+export interface CallNode extends NodeBase {
+  type: "call";
+  scenarioId: string;
+  repeat?: Repeat;
+}
+
+/** Watches for a condition on top of the main flow. Has no input. */
+export interface InterceptNode extends NodeBase {
+  type: "intercept";
+  condition: Condition;
+  minIntervalMs: number;
+}
+
+export type GraphNode = ActionNode | StartNode | WaitNode | BranchNode | CounterNode | CallNode | InterceptNode;
+export type NodeType = GraphNode["type"];
+
+export interface GraphPoint {
+  x: number;
+  y: number;
+}
+
+export interface GraphEdge {
+  from: string;
+  port: Port;
+  to: string;
+  /** Bend points the user put on the link. */
+  points: GraphPoint[];
+}
+
+export type NoteKind = "note" | "frame";
+
+/** A note or a frame. Neither the engine nor the checks read them. */
+export interface GraphNote {
+  id: string;
+  kind: NoteKind;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  text: string;
+  collapsed: boolean;
+  /** One of the names in the palette of the canvas; absent for the default look. */
+  color?: string;
+}
+
+export interface Graph {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  notes: GraphNote[];
+}
+
+export type ScenarioFormat = "list" | "canvas";
+
 export interface Scenario {
   version: number;
   id: string;
@@ -196,13 +305,25 @@ export interface Scenario {
   repeat: RepeatMode;
   pauseBetweenRounds: Pause;
   steps: Step[];
+  /** Set for a scenario drawn on the canvas; `steps` is empty then. */
+  graph?: Graph;
 }
 
 export interface ScenarioSummary {
   id: string;
   name: string;
   mode: ScenarioMode;
+  /** Steps of a list or blocks of a graph. */
   stepCount: number;
+  format: ScenarioFormat;
+}
+
+/** A piece of a graph the user saved to put into other scenarios. */
+export interface Snippet {
+  id: string;
+  name: string;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
 }
 
 export interface QueueItem {
@@ -267,6 +388,13 @@ export interface Settings {
   /** `Ctrl+Shift+F6`: modifiers (Ctrl, Alt, Shift, Win) plus a key code name. */
   hotkeyStartStop: string;
   hotkeyCapture: string;
+  /** Held only during a run with breakpoints: one block further, and on to the next breakpoint. */
+  hotkeyStep: string;
+  hotkeyContinue: string;
+  /** Held only while a recording is going. Empty means not assigned. */
+  hotkeyRecordPause: string;
+  hotkeyRecordWaitImage: string;
+  hotkeyRecordClickImage: string;
   /** 0..10 seconds, 0 turns the countdown off. */
   countdownSec: number;
   cornerStop: boolean;

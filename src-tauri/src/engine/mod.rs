@@ -8,13 +8,16 @@
 //!   releases what was pressed and keeps every counter;
 //! - a step interrupted by such a pause starts over;
 //! - time spent paused does not count towards condition timeouts.
+//!
+//! A list of steps is walked as a tree, a graph block by block along its
+//! links. Both use the same actions, waits, pauses and guards.
 
 pub mod conditions;
 pub mod timing;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -23,14 +26,18 @@ use crate::error::{AppError, AppResult};
 use crate::input::keys::vk_from_code;
 use crate::input::{self, Input};
 use crate::journal::Journal;
+use crate::model::graph::{counter_port, Follow, Graph, Node, NodeKind, Port, Wiring, MAX_CALL_DEPTH};
 use crate::model::queue::OnItemFailure;
 use crate::model::scenario::{
     ClickAction, Condition, KeyAction, LoopMode, Modifiers, MouseButton, OnFound, OnTimeout, Pause, Position,
     RepeatMode, Scenario, ScenarioMode, ScrollDirection, Step, StepKind,
 };
 use crate::model::schedule::{RunTarget, TargetKind};
-use crate::model::validate::{has_errors, parse_color, validate_queue, validate_scenario};
-use crate::runtime::{Outcome, QueueProgress, Rect, RunFinished, RunState, RunStatus, StatusHub, TargetInfo};
+use crate::model::validate::{has_errors, parse_color, validate_queue};
+use crate::runtime::{
+    Outcome, Phase, QueueProgress, Rect, RunFinished, RunState, RunStatus, RunTrace, StatusHub, TargetInfo, TraceMove,
+    TraceStop,
+};
 use crate::screen::{self, Template};
 use crate::storage::Store;
 use crate::target::{self, Hwnd};
@@ -51,6 +58,12 @@ const DRAG_STEP_MS: u64 = 10;
 const WHEEL_GAP_MS: u64 = 5;
 const TEXT_CHUNK_CHARS: usize = 20;
 const FOCUS_WAIT: Duration = Duration::from_millis(1000);
+/// The trace of a graph run goes to the window at most this often.
+const TRACE_INTERVAL: Duration = Duration::from_millis(100);
+/// Transitions one trace event carries; faster ones are not played one by one anyway.
+const TRACE_MOVES: usize = 64;
+/// Transitions the stored trace of a finished run keeps.
+const TRACE_KEPT_MOVES: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
@@ -95,29 +108,66 @@ pub struct QueuePlan {
     pub on_item_failure: OnItemFailure,
 }
 
+/// A scenario that a "Run scenario" block runs.
+pub struct Callee {
+    pub scenario: Scenario,
+    /// Folder with its template images.
+    pub dir: PathBuf,
+    graph: Option<(Arc<Graph>, Arc<Wiring>)>,
+}
+
+impl Callee {
+    pub fn new(scenario: Scenario, dir: PathBuf) -> Self {
+        let graph = scenario.graph.clone().map(|graph| {
+            let wiring = Arc::new(graph.wiring());
+            (Arc::new(graph), wiring)
+        });
+        Self { scenario, dir, graph }
+    }
+}
+
 /// Everything a run needs, read from the disk before it starts.
 pub struct Plan {
     pub info: TargetInfo,
     pub items: Vec<PlanItem>,
     pub queue: Option<QueuePlan>,
+    /// Every scenario the items run through their blocks, by id.
+    pub callees: HashMap<String, Arc<Callee>>,
+}
+
+/// Reads the scenarios `scenario` runs, directly and through others. The
+/// checks have already made sure they exist and do not lead back.
+fn load_callees(store: &Store, scenario: &Scenario, into: &mut HashMap<String, Arc<Callee>>) {
+    let mut pending = scenario.graph.as_ref().map(|graph| graph.callees()).unwrap_or_default();
+    while let Some(id) = pending.pop() {
+        if into.contains_key(&id) {
+            continue;
+        }
+        let Ok(callee) = store.load_scenario(&id) else {
+            continue;
+        };
+        pending.extend(callee.graph.as_ref().map(|graph| graph.callees()).unwrap_or_default());
+        let dir = store.scenario_dir(&id);
+        into.insert(id, Arc::new(Callee::new(callee, dir)));
+    }
 }
 
 /// Loads and checks what is to be run. A scenario with errors, a queue with
 /// errors or a queue that refers to a deleted scenario does not produce a plan.
 pub fn build_plan(store: &Store, target: &RunTarget) -> AppResult<Plan> {
-    let scenario_ok = |scenario: &Scenario| {
-        !has_errors(&validate_scenario(scenario, &|file| store.template_exists(&scenario.id, file)))
-    };
+    let scenario_ok = |scenario: &Scenario| !has_errors(&store.issues(scenario));
+    let mut callees = HashMap::new();
     match target.kind {
         TargetKind::Scenario => {
             let scenario = store.load_scenario(&target.id)?;
             if !scenario_ok(&scenario) {
                 return Err(AppError::new("invalid"));
             }
+            load_callees(store, &scenario, &mut callees);
             let info = TargetInfo { kind: TargetKind::Scenario, id: scenario.id.clone(), name: scenario.name.clone() };
             let item =
                 PlanItem { dir: store.scenario_dir(&scenario.id), rounds: scenario.repeat, invalid: false, scenario };
-            Ok(Plan { info, items: vec![item], queue: None })
+            Ok(Plan { info, items: vec![item], queue: None, callees })
         }
         TargetKind::Queue => {
             let queue = store.load_queue(&target.id)?;
@@ -127,6 +177,7 @@ pub fn build_plan(store: &Store, target: &RunTarget) -> AppResult<Plan> {
             let mut items = Vec::with_capacity(queue.items.len());
             for item in &queue.items {
                 let scenario = store.load_scenario(&item.scenario_id).map_err(|_| AppError::new("queueInvalid"))?;
+                load_callees(store, &scenario, &mut callees);
                 items.push(PlanItem {
                     dir: store.scenario_dir(&scenario.id),
                     rounds: RepeatMode::Count { times: item.rounds },
@@ -142,19 +193,65 @@ pub fn build_plan(store: &Store, target: &RunTarget) -> AppResult<Plan> {
                     repeat: queue.repeat,
                     on_item_failure: queue.on_item_failure,
                 }),
+                callees,
             })
         }
     }
 }
+
+/// Breakpoints of a run started from the editor. They live in the open
+/// editor only; the queue, the schedule, the hotkey and the harness have none.
+#[derive(Debug, Clone, Default)]
+pub struct Debug {
+    /// Ids of the blocks the run stops on.
+    pub breakpoints: HashSet<String>,
+    /// Stop on every block, starting with the first one.
+    pub step: bool,
+}
+
+/// How a run paused on a block goes on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Resume {
+    /// Run this block and stop on the next one.
+    Step,
+    /// Run until the next breakpoint.
+    Continue,
+}
+
+/// Stands in for the screen in tests: `Some` answers a condition, `None` leaves it to the real check.
+#[cfg(test)]
+pub type Probe = Box<dyn FnMut(&Condition) -> Option<bool> + Send>;
 
 pub struct RunOptions {
     pub source: Source,
     pub countdown_sec: u32,
     pub corner_stop: bool,
     pub blocked: Vec<String>,
+    /// A trial run of a graph scenario: one pass from this block.
+    pub start_node: Option<String>,
+    pub debug: Option<Debug>,
+    #[cfg(test)]
+    pub probe: Option<Probe>,
+}
+
+impl RunOptions {
+    /// No countdown, no guards and nothing to debug; the caller sets what it needs.
+    pub fn new(source: Source) -> Self {
+        Self {
+            source,
+            countdown_sec: 0,
+            corner_stop: false,
+            blocked: Vec::new(),
+            start_node: None,
+            debug: None,
+            #[cfg(test)]
+            probe: None,
+        }
+    }
 }
 
 type FinishedSink = Box<dyn Fn(&RunFinished) + Send + Sync>;
+type TraceSink = Box<dyn Fn(&RunTrace) + Send + Sync>;
 
 pub struct Engine {
     journal: Arc<Journal>,
@@ -164,6 +261,12 @@ pub struct Engine {
     stop_reason: Mutex<Option<AppError>>,
     thread: Mutex<Option<JoinHandle<()>>>,
     on_finished: FinishedSink,
+    on_trace: TraceSink,
+    /// The answer to a run that is paused on a block.
+    resume: Mutex<Option<Resume>>,
+    /// The trace of the last run of every graph scenario, by scenario id.
+    traces: Mutex<HashMap<String, RunTrace>>,
+    runs: AtomicU64,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -171,7 +274,12 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl Engine {
-    pub fn new(journal: Arc<Journal>, hub: Arc<StatusHub>, on_finished: FinishedSink) -> Arc<Self> {
+    pub fn new(
+        journal: Arc<Journal>,
+        hub: Arc<StatusHub>,
+        on_finished: FinishedSink,
+        on_trace: TraceSink,
+    ) -> Arc<Self> {
         Arc::new(Self {
             journal,
             hub,
@@ -180,7 +288,31 @@ impl Engine {
             stop_reason: Mutex::new(None),
             thread: Mutex::new(None),
             on_finished,
+            on_trace,
+            resume: Mutex::new(None),
+            traces: Mutex::new(HashMap::new()),
+            runs: AtomicU64::new(0),
         })
+    }
+
+    /// Lets a run that is paused on a block go on. Does nothing otherwise.
+    pub fn resume(&self, how: Resume) {
+        if self.is_running() && self.hub.get().state == RunState::PausedBreak {
+            *lock(&self.resume) = Some(how);
+        }
+    }
+
+    fn take_resume(&self) -> Option<Resume> {
+        lock(&self.resume).take()
+    }
+
+    /// The trace of the last run of a graph scenario, finished or still going.
+    pub fn trace(&self, scenario_id: &str) -> Option<RunTrace> {
+        lock(&self.traces).get(scenario_id).cloned()
+    }
+
+    pub fn clear_trace(&self, scenario_id: &str) {
+        lock(&self.traces).remove(scenario_id);
     }
 
     pub fn is_running(&self) -> bool {
@@ -194,6 +326,7 @@ impl Engine {
         }
         self.stop.store(false, Ordering::SeqCst);
         *lock(&self.stop_reason) = None;
+        *lock(&self.resume) = None;
         let engine = Arc::clone(self);
         let spawned = thread::Builder::new().name("clickit-run".to_string()).spawn(move || {
             let _resolution = TimerResolution::enter();
@@ -253,6 +386,9 @@ enum Halt {
     StopStep(AppError),
     /// The scenario cannot go on: timeout, closed window, rejected input.
     Fail(AppError),
+    /// An intercept ran its branch in the middle of a block: the block starts
+    /// over. Caught by the walk that runs the block, never leaves the run.
+    Restart,
 }
 
 type Exec<T> = Result<T, Halt>;
@@ -281,6 +417,35 @@ struct Hit {
     center: Option<(i32, i32)>,
 }
 
+/// An intercept block of the scenario that was started.
+struct Watch {
+    /// Index of the block in the graph.
+    node: usize,
+    condition: Condition,
+    interval: Duration,
+    /// When it was last looked at, or when its branch last ended.
+    checked: Option<Instant>,
+}
+
+/// The trace of the graph scenario being run.
+struct Trace {
+    payload: RunTrace,
+    /// The last transitions of the run, for the trace that stays after it.
+    recent: VecDeque<TraceMove>,
+    sent_at: Option<Instant>,
+    dirty: bool,
+}
+
+/// What the walk was in the middle of when an intercept took over.
+struct Scope {
+    dir: PathBuf,
+    path: Vec<usize>,
+    block: Option<String>,
+    scopes: Vec<String>,
+    step_id: Option<String>,
+    step_label: Option<String>,
+}
+
 struct Runner<'a> {
     engine: &'a Engine,
     plan: Plan,
@@ -291,14 +456,31 @@ struct Runner<'a> {
     current: usize,
     /// Target window of the current scenario in the "Window" mode.
     hwnd: Option<Hwnd>,
+    /// Loaded template images by their full path.
     templates: HashMap<String, Arc<Template>>,
-    /// 1-based positions of the current step and of the blocks around it.
+    /// Folder the template images are read from: of the scenario of the plan,
+    /// or of the scenario a block is running.
+    dir: PathBuf,
+    /// 1-based positions of the current step and of the blocks around it, in a list.
     path: Vec<usize>,
+    /// Number and name of the current block, in a graph.
+    block: Option<String>,
+    /// Labels of the "Run scenario" blocks around what is being executed.
+    scopes: Vec<String>,
+    /// Graph of the scenario that was started, for the branches of its intercepts.
+    top: Option<(Arc<Graph>, Arc<Wiring>)>,
+    intercepts: Vec<Watch>,
+    in_intercept: bool,
+    trace: Option<Trace>,
+    /// The run stops on every block, not only on breakpoints.
+    stepping: bool,
     /// State to return to after a pause: running or waiting.
     base_state: RunState,
     pause: Option<PauseKind>,
     /// Whether anything was sent or slept since the flag was last cleared.
     activity: bool,
+    /// Grows whenever something is sent or slept; a graph tells an idle cycle by it.
+    work: u64,
     blocked_checked: Option<Instant>,
     blocked_found: Option<String>,
 }
@@ -306,6 +488,7 @@ struct Runner<'a> {
 impl<'a> Runner<'a> {
     fn new(engine: &'a Engine, plan: Plan, options: RunOptions) -> Self {
         let status = RunStatus { target: Some(plan.info.clone()), ..RunStatus::default() };
+        let stepping = options.debug.as_ref().is_some_and(|debug| debug.step);
         Self {
             engine,
             plan,
@@ -315,10 +498,19 @@ impl<'a> Runner<'a> {
             current: 0,
             hwnd: None,
             templates: HashMap::new(),
+            dir: PathBuf::new(),
             path: Vec::new(),
+            block: None,
+            scopes: Vec::new(),
+            top: None,
+            intercepts: Vec::new(),
+            in_intercept: false,
+            trace: None,
+            stepping,
             base_state: RunState::Running,
             pause: None,
             activity: false,
+            work: 0,
             blocked_checked: None,
             blocked_found: None,
         }
@@ -341,6 +533,8 @@ impl<'a> Runner<'a> {
             Ok(()) => (Outcome::Completed, None),
             Err(Halt::Stop(reason)) | Err(Halt::StopStep(reason)) => (Outcome::Stopped, Some(reason)),
             Err(Halt::Fail(reason)) => (Outcome::Failed, Some(reason)),
+            // Every walk catches it; one that got here has nothing to start over.
+            Err(Halt::Restart) => (Outcome::Failed, Some(AppError::new("invalid"))),
         }
     }
 
@@ -357,8 +551,24 @@ impl<'a> Runner<'a> {
         }
     }
 
+    /// Where the run is, for the status, the journal and messages: `2.1` in a
+    /// list, `3 «Wait for Start»` in a graph, with the blocks that run this
+    /// scenario in front.
     fn label(&self) -> String {
-        self.path.iter().map(|index| index.to_string()).collect::<Vec<_>>().join(".")
+        let own = match &self.block {
+            Some(block) => block.clone(),
+            None => self.path.iter().map(|index| index.to_string()).collect::<Vec<_>>().join("."),
+        };
+        let mut parts: Vec<&str> = self.scopes.iter().map(String::as_str).collect();
+        if !own.is_empty() {
+            parts.push(&own);
+        }
+        parts.join(" › ")
+    }
+
+    fn worked(&mut self) {
+        self.activity = true;
+        self.work += 1;
     }
 
     fn fail(&self, code: &str) -> Halt {
@@ -399,13 +609,18 @@ impl<'a> Runner<'a> {
         if ms == 0 {
             return self.check_stop();
         }
-        self.activity = true;
+        self.worked();
         self.engine.hub.flush();
+        self.trace_flush();
         self.idle(ms)
     }
 
     fn pause_for(&mut self, pause: Pause) -> Exec<()> {
-        self.sleep(pick_ms(pause))
+        let ms = pick_ms(pause);
+        if ms > 0 {
+            self.trace_phase(Phase::Pause, Some(ms));
+        }
+        self.sleep(ms)
     }
 
     fn countdown(&mut self) -> Exec<()> {
@@ -527,23 +742,56 @@ impl<'a> Runner<'a> {
     }
 
     fn run_item(&mut self, index: usize) -> Exec<()> {
+        let result = self.run_rounds(index);
+        self.close_trace(&result);
+        self.intercepts.clear();
+        self.top = None;
+        result
+    }
+
+    fn run_rounds(&mut self, index: usize) -> Exec<()> {
         self.current = index;
         self.hwnd = None;
         self.templates.clear();
+        self.dir = self.plan.items[index].dir.clone();
         self.path.clear();
-        let rounds = Self::rounds_total(self.plan.items[index].rounds);
+        self.block = None;
+        self.scopes.clear();
+        self.in_intercept = false;
+        let mut rounds = Self::rounds_total(self.plan.items[index].rounds);
         self.status.scenario_id = Some(self.scenario().id.clone());
         self.status.scenario_name = Some(self.scenario().name.clone());
         self.status.round = 0;
-        self.status.rounds_total = rounds;
         self.status.step_id = None;
         self.status.step_label = None;
+        self.status.loop_pass = None;
+        self.status.loop_total = None;
         self.base_state = RunState::Running;
         self.status.state = RunState::Running;
+
+        let graph = self.scenario().graph.clone().map(|graph| {
+            let wiring = Arc::new(graph.wiring());
+            (Arc::new(graph), wiring)
+        });
+        let mut from = None;
+        let mut unknown_start = false;
+        if let Some((graph, wiring)) = &graph {
+            self.open_graph(graph, wiring);
+            if let Some(id) = self.options.start_node.clone() {
+                // A trial run from a chosen block: one pass, whatever the scenario repeats.
+                from = wiring.index_of(&id);
+                unknown_start = from.is_none();
+                rounds = Some(1);
+            }
+        }
+        self.status.rounds_total = rounds;
         self.push();
 
         if self.plan.items[index].invalid {
             return Err(Halt::Fail(AppError::new("invalid")));
+        }
+        if unknown_start {
+            return Err(Halt::Fail(AppError::new("notFound")));
         }
         if self.scenario().mode == ScenarioMode::Window {
             self.focus_target()?;
@@ -557,7 +805,13 @@ impl<'a> Runner<'a> {
             round += 1;
             self.status.round = round;
             self.activity = false;
-            self.run_steps(&steps)?;
+            match &graph {
+                // Counters start from zero on every round.
+                Some((graph, wiring)) => self.run_graph(graph, wiring, from)?,
+                None => {
+                    self.run_steps(&steps)?;
+                }
+            }
             if rounds.is_some_and(|total| round >= total) {
                 return Ok(());
             }
@@ -596,6 +850,7 @@ impl<'a> Runner<'a> {
                 match result {
                     Ok(()) => worked = true,
                     Err(Halt::Stop(reason)) => return Err(Halt::Stop(reason)),
+                    Err(Halt::Restart) => return Err(Halt::Restart),
                     Err(Halt::StopStep(reason)) | Err(Halt::Fail(reason)) => {
                         self.engine.journal.add_with_reason(
                             "queueItemFailed",
@@ -626,11 +881,21 @@ impl<'a> Runner<'a> {
             if !step.enabled {
                 continue;
             }
+            // Intercepts of the scenario that runs this list are looked at between its steps.
+            self.watch()?;
             self.path.push(index + 1);
-            self.status.step_id = Some(step.id.clone());
-            self.status.step_label = Some(self.label());
-            self.push();
-            let flow = self.run_step(step);
+            let flow = loop {
+                // Inside a "Run scenario" block the status keeps the id of that block.
+                if self.scopes.is_empty() {
+                    self.status.step_id = Some(step.id.clone());
+                }
+                self.status.step_label = Some(self.label());
+                self.push();
+                match self.run_step(step) {
+                    Err(Halt::Restart) => continue,
+                    other => break other,
+                }
+            };
             self.path.pop();
             if flow? == Flow::Break {
                 return Ok(Flow::Break);
@@ -698,7 +963,7 @@ impl<'a> Runner<'a> {
             self.guard()?;
             match self.try_action(&step.kind)? {
                 Attempt::Done => {
-                    self.activity = true;
+                    self.worked();
                     return Ok(());
                 }
                 Attempt::Retry => self.input.release_all(),
@@ -878,12 +1143,13 @@ impl<'a> Runner<'a> {
     // Conditions
 
     fn template(&mut self, file: &str) -> Exec<Arc<Template>> {
-        if let Some(template) = self.templates.get(file) {
+        let path = self.dir.join(file);
+        let key = path.to_string_lossy().into_owned();
+        if let Some(template) = self.templates.get(&key) {
             return Ok(Arc::clone(template));
         }
-        let path = self.plan.items[self.current].dir.join(file);
         let template = Arc::new(Template::load(&path).map_err(|error| Halt::Fail(error.with("step", self.label())))?);
-        self.templates.insert(file.to_string(), Arc::clone(&template));
+        self.templates.insert(key, Arc::clone(&template));
         Ok(template)
     }
 
@@ -898,6 +1164,10 @@ impl<'a> Runner<'a> {
     /// captured counts as "does not hold" for every kind, including "image gone".
     fn check(&mut self, condition: &Condition) -> Exec<Option<Hit>> {
         let plain = |holds: bool| holds.then_some(Hit { center: None });
+        #[cfg(test)]
+        if let Some(holds) = self.options.probe.as_mut().and_then(|probe| probe(condition)) {
+            return Ok(plain(holds));
+        }
         match condition {
             Condition::Pixel { point, color, tolerance } => {
                 let (x, y) = self.point(point)?.unwrap_or_else(input::cursor_pos);
@@ -960,8 +1230,14 @@ impl<'a> Runner<'a> {
         // Only time spent checking and waiting counts, not time spent paused.
         let mut active = Duration::ZERO;
         loop {
+            // An intercept is looked at on every poll, so it fires even while
+            // the main flow is stuck in this wait.
+            if self.watch()? {
+                return Err(Halt::Restart);
+            }
             self.guard()?;
             let started = Instant::now();
+            self.trace_check();
             if let Some(hit) = self.check(condition)? {
                 return Ok(Some(hit));
             }
@@ -991,6 +1267,11 @@ impl<'a> Runner<'a> {
                 OnTimeout::Continue => Ok(()),
             };
         };
+        self.click_found(on_found, &hit)
+    }
+
+    /// What a wait does once its image is found: nothing, or a click on it.
+    fn click_found(&mut self, on_found: OnFound, hit: &Hit) -> Exec<()> {
         let (OnFound::Click { button, offset_x, offset_y }, Some((x, y))) = (on_found, hit.center) else {
             return Ok(());
         };
@@ -1009,7 +1290,7 @@ impl<'a> Runner<'a> {
         }
         self.move_to(Some(point))?;
         self.click_once(button)?;
-        self.activity = true;
+        self.worked();
         Ok(())
     }
 
@@ -1063,5 +1344,947 @@ impl<'a> Runner<'a> {
         // For the block around this one, a loop that ran at all counts as work.
         self.activity = outer.2 || pass > 0;
         result
+    }
+
+    // Graph
+
+    /// Prepares what a graph scenario needs for all of its rounds: its
+    /// intercepts and a fresh trace.
+    fn open_graph(&mut self, graph: &Arc<Graph>, wiring: &Arc<Wiring>) {
+        self.intercepts = graph
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, node)| node.enabled)
+            .filter_map(|(at, node)| match &node.kind {
+                NodeKind::Intercept { condition, min_interval_ms } => Some(Watch {
+                    node: at,
+                    condition: condition.clone(),
+                    interval: Duration::from_millis((*min_interval_ms).max(0) as u64),
+                    checked: None,
+                }),
+                _ => None,
+            })
+            .collect();
+        self.top = Some((Arc::clone(graph), Arc::clone(wiring)));
+        let scenario_id = self.scenario().id.clone();
+        self.engine.clear_trace(&scenario_id);
+        let run = self.engine.runs.fetch_add(1, Ordering::SeqCst) + 1;
+        self.trace = Some(Trace {
+            payload: RunTrace { scenario_id, run, ..RunTrace::default() },
+            recent: VecDeque::new(),
+            sent_at: None,
+            dirty: false,
+        });
+    }
+
+    /// One pass over a graph: from its start block, or from the block `from`.
+    /// Counters live for one pass.
+    fn run_graph(&mut self, graph: &Arc<Graph>, wiring: &Wiring, from: Option<usize>) -> Exec<()> {
+        let mut at = match from {
+            Some(index) => Some(index),
+            None => Some(graph.start().ok_or_else(|| self.fail("invalid"))?),
+        };
+        let mut counters: HashMap<usize, i64> = HashMap::new();
+        // Blocks passed since something was last sent or slept.
+        let mut seen: HashSet<usize> = HashSet::new();
+        let mut mark = self.work;
+        while let Some(index) = at {
+            self.check_stop()?;
+            if self.watch()? {
+                continue;
+            }
+            if self.work != mark {
+                mark = self.work;
+                seen.clear();
+            }
+            if !seen.insert(index) {
+                // A cycle that sent nothing and slept nowhere gets the delay of an empty pass.
+                self.idle(EMPTY_PASS_DELAY_MS)?;
+                seen.clear();
+                seen.insert(index);
+            }
+            let node = &graph.nodes[index];
+            self.show_block(graph, index);
+            if !matches!(node.kind, NodeKind::Start) {
+                self.debug_pause(&node.id)?;
+            }
+            let port = loop {
+                match self.run_node(node, index, &mut counters) {
+                    Err(Halt::Restart) => self.show_block(graph, index),
+                    other => break other?,
+                }
+            };
+            if node.enabled {
+                self.pause_for(node.pause_after)?;
+            }
+            at = self.follow(graph, wiring, index, port)?;
+        }
+        Ok(())
+    }
+
+    /// Makes the block the current one in the status and in the trace.
+    fn show_block(&mut self, graph: &Graph, index: usize) {
+        let node = &graph.nodes[index];
+        self.block = Some(graph.label(index));
+        if self.scopes.is_empty() {
+            self.status.step_id = Some(node.id.clone());
+        }
+        self.status.step_label = Some(self.label());
+        self.push();
+        self.trace_enter(&node.id);
+    }
+
+    /// The block the output leads to; `None` ends the pass. A `timeout`
+    /// output without a link fails the scenario.
+    fn follow(&mut self, graph: &Graph, wiring: &Wiring, from: usize, port: Port) -> Exec<Option<usize>> {
+        let next = wiring.follow(from, port);
+        let to = match next {
+            Follow::To(index) => Some(index),
+            Follow::End | Follow::Timeout => None,
+        };
+        self.trace_move(&graph.nodes[from].id, port, to.map(|index| graph.nodes[index].id.as_str()));
+        match next {
+            Follow::Timeout => Err(self.fail("conditionTimeout")),
+            Follow::To(_) | Follow::End => Ok(to),
+        }
+    }
+
+    /// Runs one block and tells which output the pass leaves it through.
+    fn run_node(&mut self, node: &Node, index: usize, counters: &mut HashMap<usize, i64>) -> Exec<Port> {
+        if !node.enabled {
+            return Ok(node.kind.skip_port());
+        }
+        if let Some(kind) = node.kind.action() {
+            let step =
+                Step { id: node.id.clone(), enabled: true, pause_after: Pause::default(), repeat: node.repeat, kind };
+            self.trace_phase(Phase::Action, None);
+            self.run_repeatable(&step)?;
+            return Ok(Port::Next);
+        }
+        let limit = |timeout_ms: i64| (timeout_ms > 0).then_some(timeout_ms as u64);
+        match &node.kind {
+            NodeKind::Stop => Err(Halt::StopStep(AppError::new("stopStep").with("step", self.label()))),
+            NodeKind::Wait { condition, poll_ms, timeout_ms, on_found } => {
+                self.trace_phase(Phase::Check, limit(*timeout_ms));
+                match self.wait_condition(condition, *poll_ms, *timeout_ms, false)? {
+                    Some(hit) => {
+                        self.click_found(*on_found, &hit)?;
+                        Ok(Port::Next)
+                    }
+                    None => Ok(Port::Timeout),
+                }
+            }
+            NodeKind::Branch { condition, poll_ms, timeout_ms } => {
+                self.trace_phase(Phase::Check, limit(*timeout_ms));
+                let hit = self.wait_condition(condition, *poll_ms, *timeout_ms, true)?;
+                Ok(if hit.is_some() { Port::Yes } else { Port::No })
+            }
+            NodeKind::Counter { times, pause_between } => {
+                let passed = counters.get(&index).copied().unwrap_or(0);
+                match counter_port(*times, passed) {
+                    Port::Body => {
+                        // No pause before the first pass and none after the last one.
+                        if passed > 0 {
+                            self.pause_for(*pause_between)?;
+                        }
+                        counters.insert(index, passed + 1);
+                        self.count(&node.id, Some((passed + 1, *times)));
+                        Ok(Port::Body)
+                    }
+                    _ => {
+                        // Entered again later, the counter starts from zero.
+                        counters.remove(&index);
+                        self.count(&node.id, None);
+                        Ok(Port::Done)
+                    }
+                }
+            }
+            NodeKind::Call { scenario_id } => {
+                self.run_call_block(node, scenario_id)?;
+                Ok(Port::Next)
+            }
+            // A start block only passes on. An intercept is entered through its
+            // branch, never along a link; the actions were handled above.
+            NodeKind::Start
+            | NodeKind::Intercept { .. }
+            | NodeKind::Click { .. }
+            | NodeKind::Move { .. }
+            | NodeKind::Drag { .. }
+            | NodeKind::Scroll { .. }
+            | NodeKind::Key { .. }
+            | NodeKind::Text { .. }
+            | NodeKind::Pause { .. } => Ok(Port::Next),
+        }
+    }
+
+    /// Shows the progress of a counter that is in its body; `None` takes it away.
+    fn count(&mut self, id: &str, progress: Option<(i64, i64)>) {
+        if !self.scopes.is_empty() {
+            return;
+        }
+        self.status.loop_pass = progress.map(|(passed, _)| passed);
+        self.status.loop_total = progress.map(|(_, total)| total);
+        self.push();
+        if let Some(trace) = self.trace.as_mut() {
+            match progress {
+                Some(progress) => trace.payload.counters.insert(id.to_string(), progress),
+                None => trace.payload.counters.remove(id),
+            };
+            self.trace_send(false);
+        }
+    }
+
+    // Run scenario
+
+    /// A "Run scenario" block with its own repeat.
+    fn run_call_block(&mut self, node: &Node, callee_id: &str) -> Exec<()> {
+        let times = node.repeat.map_or(1, |repeat| repeat.times);
+        let mut result = Ok(());
+        for pass in 1..=times {
+            if times > 1 {
+                self.status.step_repeat = Some(pass);
+                self.status.step_repeat_total = Some(times);
+                self.push();
+            }
+            result = self.run_call(callee_id).and_then(|()| match node.repeat {
+                Some(repeat) if pass < times => self.pause_for(repeat.pause_between),
+                _ => Ok(()),
+            });
+            if result.is_err() {
+                break;
+            }
+        }
+        self.status.step_repeat = None;
+        self.status.step_repeat_total = None;
+        result
+    }
+
+    /// One pass of another scenario, in the window and the mode of this run.
+    /// Its own repeat and pause between rounds do not apply. A "Stop" block
+    /// and a failure inside end the whole run.
+    fn run_call(&mut self, callee_id: &str) -> Exec<()> {
+        let Some(callee) = self.plan.callees.get(callee_id).cloned() else {
+            return Err(self.fail("callMissing"));
+        };
+        if self.scopes.len() >= MAX_CALL_DEPTH {
+            return Err(self.fail("callTooDeep"));
+        }
+        self.trace_phase(Phase::Action, None);
+        let dir = std::mem::replace(&mut self.dir, callee.dir.clone());
+        let path = std::mem::take(&mut self.path);
+        let block = self.block.take();
+        self.scopes.push(block.clone().unwrap_or_default());
+        let result = match &callee.graph {
+            Some((graph, wiring)) => self.run_graph(graph, wiring, None),
+            None => self.run_steps(&callee.scenario.steps).map(|_| ()),
+        };
+        self.scopes.pop();
+        self.dir = dir;
+        self.path = path;
+        self.block = block;
+        self.status.step_label = Some(self.label());
+        self.push();
+        result
+    }
+
+    // Intercepts
+
+    /// Looks at the intercepts that are due. Returns whether one of them fired
+    /// and ran its branch; the block that was going on starts over then.
+    /// While a branch runs, the intercepts are not looked at.
+    fn watch(&mut self) -> Exec<bool> {
+        if self.in_intercept || self.intercepts.is_empty() {
+            return Ok(false);
+        }
+        let Some((graph, wiring)) = self.top.clone() else {
+            return Ok(false);
+        };
+        for at in 0..self.intercepts.len() {
+            let watch = &self.intercepts[at];
+            if watch.checked.is_some_and(|checked| checked.elapsed() < watch.interval) {
+                continue;
+            }
+            let (node, condition) = (watch.node, watch.condition.clone());
+            // An intercept belongs to the scenario that was started, whatever
+            // that scenario is running now.
+            let scope = self.enter_top();
+            let fired = self.guard().and_then(|_| self.check(&condition));
+            self.intercepts[at].checked = Some(Instant::now());
+            let result = match fired {
+                Ok(Some(_)) => self.run_intercept(&graph, &wiring, node).map(|()| true),
+                Ok(None) => Ok(false),
+                Err(halt) => Err(halt),
+            };
+            // The interval counts from the end of the branch.
+            self.intercepts[at].checked = Some(Instant::now());
+            self.leave_top(scope);
+            if !matches!(result, Ok(false)) {
+                return result;
+            }
+        }
+        Ok(false)
+    }
+
+    fn enter_top(&mut self) -> Scope {
+        let dir = self.plan.items[self.current].dir.clone();
+        Scope {
+            dir: std::mem::replace(&mut self.dir, dir),
+            path: std::mem::take(&mut self.path),
+            block: self.block.take(),
+            scopes: std::mem::take(&mut self.scopes),
+            step_id: self.status.step_id.clone(),
+            step_label: self.status.step_label.clone(),
+        }
+    }
+
+    fn leave_top(&mut self, scope: Scope) {
+        self.dir = scope.dir;
+        self.path = scope.path;
+        self.block = scope.block;
+        self.scopes = scope.scopes;
+        self.status.step_id = scope.step_id;
+        self.status.step_label = scope.step_label;
+        self.push();
+    }
+
+    /// Runs the branch of an intercept that fired, up to an output without a link.
+    fn run_intercept(&mut self, graph: &Arc<Graph>, wiring: &Wiring, node: usize) -> Exec<()> {
+        let name = ("name", self.scenario().name.clone());
+        self.engine.journal.add("interceptFired", &[name, ("step", graph.label(node))]);
+        let outer = (self.base_state, self.status.state);
+        self.in_intercept = true;
+        self.base_state = RunState::Running;
+        self.set_state(RunState::Running);
+        self.show_block(graph, node);
+        let result = self.follow(graph, wiring, node, Port::Next).and_then(|first| match first {
+            Some(first) => self.run_graph(graph, wiring, Some(first)),
+            None => Ok(()),
+        });
+        self.in_intercept = false;
+        self.base_state = outer.0;
+        if result.is_ok() {
+            self.set_state(outer.1);
+        }
+        result
+    }
+
+    // Breakpoints
+
+    /// Stops on a breakpoint, or on every block of a step-by-step run, until
+    /// the user asks for one step or to go on. Blocks of the scenarios run
+    /// through "Run scenario" are not stopped on.
+    fn debug_pause(&mut self, id: &str) -> Exec<()> {
+        if !self.scopes.is_empty() {
+            return Ok(());
+        }
+        let Some(debug) = &self.options.debug else {
+            return Ok(());
+        };
+        if !self.stepping && !debug.breakpoints.contains(id) {
+            return Ok(());
+        }
+        self.input.release_all();
+        // An answer left from an earlier pause does not count.
+        self.engine.take_resume();
+        self.status.state = RunState::PausedBreak;
+        self.push();
+        self.engine.hub.flush();
+        self.trace_flush();
+        let how = loop {
+            if let Some(how) = self.engine.take_resume() {
+                break how;
+            }
+            self.idle(PAUSE_POLL_MS / 2)?;
+        };
+        self.stepping = how == Resume::Step;
+        self.status.state = self.base_state;
+        self.push();
+        // "Step" pressed in the ClickIt window took the focus from the target.
+        if let Some(hwnd) = self.hwnd {
+            target::request_focus(hwnd);
+        }
+        Ok(())
+    }
+
+    // Trace
+
+    /// The trace follows the blocks of the scenario that was started, not of
+    /// the ones it runs.
+    fn tracing(&mut self) -> Option<&mut Trace> {
+        if self.scopes.is_empty() {
+            self.trace.as_mut()
+        } else {
+            None
+        }
+    }
+
+    fn trace_enter(&mut self, id: &str) {
+        let Some(trace) = self.tracing() else {
+            return;
+        };
+        trace.payload.node = Some(id.to_string());
+        trace.payload.phase = None;
+        trace.payload.phase_ms = None;
+        trace.payload.checks = 0;
+        *trace.payload.node_passes.entry(id.to_string()).or_insert(0) += 1;
+        self.trace_send(false);
+    }
+
+    fn trace_phase(&mut self, phase: Phase, ms: Option<u64>) {
+        let Some(trace) = self.tracing() else {
+            return;
+        };
+        trace.payload.phase = Some(phase);
+        trace.payload.phase_ms = ms;
+        self.trace_send(false);
+    }
+
+    fn trace_check(&mut self) {
+        let Some(trace) = self.tracing() else {
+            return;
+        };
+        trace.payload.checks += 1;
+        self.trace_send(false);
+    }
+
+    fn trace_move(&mut self, from: &str, port: Port, to: Option<&str>) {
+        let Some(trace) = self.tracing() else {
+            return;
+        };
+        let step = TraceMove { from: from.to_string(), port, to: to.map(str::to_string) };
+        *trace.payload.edge_passes.entry(format!("{from}:{}", port.as_str())).or_insert(0) += 1;
+        trace.payload.outcomes.insert(from.to_string(), port);
+        if trace.payload.moves.len() >= TRACE_MOVES {
+            trace.payload.moves.remove(0);
+        }
+        trace.payload.moves.push(step.clone());
+        if trace.recent.len() >= TRACE_KEPT_MOVES {
+            trace.recent.pop_front();
+        }
+        trace.recent.push_back(step);
+        self.trace_send(false);
+    }
+
+    /// Sends the trace when enough time has passed since the last one; `force` sends at once.
+    fn trace_send(&mut self, force: bool) {
+        let Some(trace) = self.trace.as_mut() else {
+            return;
+        };
+        if !force && trace.sent_at.is_some_and(|at| at.elapsed() < TRACE_INTERVAL) {
+            trace.dirty = true;
+            return;
+        }
+        (self.engine.on_trace)(&trace.payload);
+        // A window opened in the middle of the run and a tool ask for this copy.
+        let mut kept = trace.payload.clone();
+        kept.moves = trace.recent.iter().cloned().collect();
+        lock(&self.engine.traces).insert(kept.scenario_id.clone(), kept);
+        trace.payload.moves.clear();
+        trace.sent_at = Some(Instant::now());
+        trace.dirty = false;
+    }
+
+    /// Sends what is pending. Called before the run goes to sleep.
+    fn trace_flush(&mut self) {
+        if self.trace.as_ref().is_some_and(|trace| trace.dirty) {
+            self.trace_send(true);
+        }
+    }
+
+    /// Sends the last event of the run and leaves the trace in memory.
+    fn close_trace(&mut self, result: &Exec<()>) {
+        let Some(mut trace) = self.trace.take() else {
+            return;
+        };
+        let (outcome, reason) = match result {
+            Ok(()) => (Outcome::Completed, None),
+            Err(Halt::Stop(reason)) | Err(Halt::StopStep(reason)) => (Outcome::Stopped, Some(reason.clone())),
+            Err(Halt::Fail(reason)) => (Outcome::Failed, Some(reason.clone())),
+            Err(Halt::Restart) => (Outcome::Failed, None),
+        };
+        trace.payload.phase = None;
+        trace.payload.phase_ms = None;
+        trace.payload.counters.clear();
+        trace.payload.stop = Some(TraceStop { node: trace.payload.node.clone(), outcome, reason });
+        (self.engine.on_trace)(&trace.payload);
+        trace.payload.moves = trace.recent.into_iter().collect();
+        lock(&self.engine.traces).insert(trace.payload.scenario_id.clone(), trace.payload);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::graph::Edge;
+    use crate::runtime::JournalEntry;
+    use std::sync::mpsc::{self, Receiver};
+
+    const WAIT: Duration = Duration::from_secs(10);
+
+    /// An engine that writes into a temporary folder and hands out what it reports.
+    struct Bench {
+        engine: Arc<Engine>,
+        hub: Arc<StatusHub>,
+        journal: Arc<Journal>,
+        finished: Receiver<RunFinished>,
+        traces: Arc<Mutex<Vec<RunTrace>>>,
+        dir: PathBuf,
+    }
+
+    impl Bench {
+        fn new() -> Self {
+            let dir = std::env::temp_dir().join(format!("clickit-engine-{}", crate::model::scenario::new_id("t")));
+            std::fs::create_dir_all(&dir).unwrap();
+            let journal =
+                Arc::new(Journal::start(dir.join("journal.jsonl"), dir.join("journal.prev.jsonl"), Box::new(|| {})));
+            let hub = Arc::new(StatusHub::new(Box::new(|_| {})));
+            let (tx, finished) = mpsc::channel();
+            let tx = Mutex::new(tx);
+            let traces = Arc::new(Mutex::new(Vec::new()));
+            let seen = Arc::clone(&traces);
+            let engine = Engine::new(
+                Arc::clone(&journal),
+                Arc::clone(&hub),
+                Box::new(move |finished| {
+                    let _ = lock(&tx).send(finished.clone());
+                }),
+                Box::new(move |trace| lock(&seen).push(trace.clone())),
+            );
+            Self { engine, hub, journal, finished, traces, dir }
+        }
+
+        fn plan(&self, scenario: Scenario, callees: Vec<Scenario>) -> Plan {
+            let info = TargetInfo { kind: TargetKind::Scenario, id: scenario.id.clone(), name: scenario.name.clone() };
+            let item = PlanItem { dir: self.dir.clone(), rounds: scenario.repeat, invalid: false, scenario };
+            let callees = callees
+                .into_iter()
+                .map(|callee| (callee.id.clone(), Arc::new(Callee::new(callee, self.dir.clone()))))
+                .collect();
+            Plan { info, items: vec![item], queue: None, callees }
+        }
+
+        fn start(&self, scenario: Scenario, callees: Vec<Scenario>, options: RunOptions) {
+            self.engine.start(self.plan(scenario, callees), options).unwrap();
+        }
+
+        fn end(&self) -> RunFinished {
+            let finished = self.finished.recv_timeout(WAIT).expect("the run did not end");
+            self.engine.join();
+            finished
+        }
+
+        fn run(&self, scenario: Scenario, callees: Vec<Scenario>, options: RunOptions) -> RunFinished {
+            self.start(scenario, callees, options);
+            self.end()
+        }
+
+        /// Waits until the run stops on a block and tells which one.
+        fn paused_on(&self) -> String {
+            let deadline = Instant::now() + WAIT;
+            loop {
+                let status = self.hub.get();
+                if status.state == RunState::PausedBreak {
+                    return status.step_id.unwrap_or_default();
+                }
+                assert!(Instant::now() < deadline, "the run did not pause");
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        fn journal(&self, code: &str) -> Vec<JournalEntry> {
+            self.journal.read().into_iter().filter(|entry| entry.code == code).collect()
+        }
+
+        fn trace(&self, scenario: &str) -> RunTrace {
+            self.engine.trace(scenario).expect("no trace")
+        }
+    }
+
+    impl Drop for Bench {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn node(id: &str, kind: NodeKind) -> Node {
+        let mut node = Node::new(kind);
+        node.id = id.to_string();
+        node
+    }
+
+    fn edge(from: &str, port: Port, to: &str) -> Edge {
+        Edge { from: from.to_string(), port, to: to.to_string(), points: Vec::new() }
+    }
+
+    /// A block that does something without touching the mouse or the keyboard.
+    fn tick(id: &str) -> Node {
+        node(id, NodeKind::Pause { duration: Pause::exact(1) })
+    }
+
+    fn named(name: &str) -> Condition {
+        Condition::Process { name: name.to_string() }
+    }
+
+    fn branch(id: &str, name: &str) -> Node {
+        node(id, NodeKind::Branch { condition: named(name), poll_ms: 5, timeout_ms: 0 })
+    }
+
+    fn wait(id: &str, name: &str, timeout_ms: i64) -> Node {
+        node(id, NodeKind::Wait { condition: named(name), poll_ms: 5, timeout_ms, on_found: OnFound::None })
+    }
+
+    fn canvas(id: &str, nodes: Vec<Node>, edges: Vec<Edge>) -> Scenario {
+        let mut scenario = Scenario::new_canvas(id);
+        scenario.id = id.to_string();
+        scenario.graph = Some(Graph { nodes, edges, notes: Vec::new() });
+        scenario
+    }
+
+    fn options() -> RunOptions {
+        RunOptions::new(Source::Schedule)
+    }
+
+    /// Conditions are answered by the name of the process they look for.
+    fn probed(answer: impl FnMut(&str) -> bool + Send + 'static) -> RunOptions {
+        let mut answer = answer;
+        let mut options = options();
+        options.probe = Some(Box::new(move |condition| match condition {
+            Condition::Process { name } => Some(answer(name)),
+            _ => Some(false),
+        }));
+        options
+    }
+
+    fn passes(trace: &RunTrace, id: &str) -> u64 {
+        trace.node_passes.get(id).copied().unwrap_or(0)
+    }
+
+    #[test]
+    fn a_counter_runs_its_body_the_set_number_of_times_and_then_leaves() {
+        let bench = Bench::new();
+        let scenario = canvas(
+            "count",
+            vec![
+                node("s", NodeKind::Start),
+                node("c", NodeKind::Counter { times: 3, pause_between: Pause::default() }),
+                tick("body"),
+                tick("after"),
+            ],
+            vec![
+                edge("s", Port::Next, "c"),
+                edge("c", Port::Body, "body"),
+                edge("body", Port::Next, "c"),
+                edge("c", Port::Done, "after"),
+            ],
+        );
+        let finished = bench.run(scenario, vec![], options());
+        assert_eq!(finished.outcome, Outcome::Completed);
+        let trace = bench.trace("count");
+        assert_eq!(passes(&trace, "body"), 3);
+        assert_eq!(passes(&trace, "c"), 4);
+        assert_eq!(passes(&trace, "after"), 1);
+        assert_eq!(trace.edge_passes.get("c:body"), Some(&3));
+        assert_eq!(trace.edge_passes.get("c:done"), Some(&1));
+        assert_eq!(trace.outcomes.get("c"), Some(&Port::Done));
+        assert!(trace.counters.is_empty());
+        let stop = trace.stop.expect("the trace of a finished run says how it ended");
+        assert_eq!(stop.outcome, Outcome::Completed);
+        assert_eq!(stop.node.as_deref(), Some("after"));
+        // The window got the trace while the run was going, and the last event is the end.
+        let sent = lock(&bench.traces);
+        assert!(sent.len() >= 2);
+        assert!(sent.last().unwrap().stop.is_some());
+        assert!(sent.iter().all(|event| event.scenario_id == "count" && event.run == trace.run));
+    }
+
+    #[test]
+    fn a_condition_sends_the_pass_through_yes_or_no() {
+        let graph = || {
+            canvas(
+                "fork",
+                vec![node("s", NodeKind::Start), branch("b", "game.exe"), tick("yes"), tick("no")],
+                vec![edge("s", Port::Next, "b"), edge("b", Port::Yes, "yes"), edge("b", Port::No, "no")],
+            )
+        };
+        let bench = Bench::new();
+        bench.run(graph(), vec![], probed(|_| true));
+        let trace = bench.trace("fork");
+        assert_eq!((passes(&trace, "yes"), passes(&trace, "no")), (1, 0));
+        assert_eq!(trace.outcomes.get("b"), Some(&Port::Yes));
+
+        bench.run(graph(), vec![], probed(|_| false));
+        let second = bench.trace("fork");
+        assert_eq!((passes(&second, "yes"), passes(&second, "no")), (0, 1));
+        assert!(second.run > trace.run);
+    }
+
+    #[test]
+    fn a_wait_without_a_timeout_link_fails_and_a_linked_one_goes_on() {
+        let bench = Bench::new();
+        let bare = canvas(
+            "bare",
+            vec![node("s", NodeKind::Start), wait("w", "game.exe", 20), tick("found")],
+            vec![edge("s", Port::Next, "w"), edge("w", Port::Next, "found")],
+        );
+        let finished = bench.run(bare, vec![], probed(|_| false));
+        assert_eq!(finished.outcome, Outcome::Failed);
+        assert_eq!(finished.reason.unwrap().code, "conditionTimeout");
+        let trace = bench.trace("bare");
+        assert_eq!(passes(&trace, "found"), 0);
+        assert_eq!(trace.stop.unwrap().node.as_deref(), Some("w"));
+
+        let linked = canvas(
+            "linked",
+            vec![node("s", NodeKind::Start), wait("w", "game.exe", 20), tick("found"), tick("late")],
+            vec![edge("s", Port::Next, "w"), edge("w", Port::Next, "found"), edge("w", Port::Timeout, "late")],
+        );
+        let finished = bench.run(linked, vec![], probed(|_| false));
+        assert_eq!(finished.outcome, Outcome::Completed);
+        let trace = bench.trace("linked");
+        assert_eq!((passes(&trace, "found"), passes(&trace, "late")), (0, 1));
+    }
+
+    #[test]
+    fn a_disabled_block_is_passed_through_and_a_stop_block_ends_the_run() {
+        let bench = Bench::new();
+        let mut off = branch("b", "game.exe");
+        off.enabled = false;
+        let scenario = canvas(
+            "skip",
+            vec![node("s", NodeKind::Start), off, tick("yes"), node("stop", NodeKind::Stop), tick("never")],
+            vec![
+                edge("s", Port::Next, "b"),
+                edge("b", Port::Yes, "yes"),
+                edge("b", Port::No, "stop"),
+                edge("stop", Port::Next, "never"),
+            ],
+        );
+        // The condition would hold, but a switched-off condition is left through "no".
+        let finished = bench.run(scenario, vec![], probed(|_| true));
+        assert_eq!(finished.outcome, Outcome::Stopped);
+        assert_eq!(finished.reason.unwrap().code, "stopStep");
+        let trace = bench.trace("skip");
+        assert_eq!((passes(&trace, "yes"), passes(&trace, "never")), (0, 0));
+    }
+
+    #[test]
+    fn a_start_from_a_block_makes_one_pass_from_it() {
+        let bench = Bench::new();
+        let mut scenario = canvas(
+            "from",
+            vec![node("s", NodeKind::Start), tick("a"), tick("b"), tick("c")],
+            vec![edge("s", Port::Next, "a"), edge("a", Port::Next, "b"), edge("b", Port::Next, "c")],
+        );
+        scenario.repeat = RepeatMode::Count { times: 5 };
+        let mut from_b = options();
+        from_b.start_node = Some("b".to_string());
+        let finished = bench.run(scenario.clone(), vec![], from_b);
+        assert_eq!(finished.outcome, Outcome::Completed);
+        let trace = bench.trace("from");
+        assert_eq!((passes(&trace, "a"), passes(&trace, "b"), passes(&trace, "c")), (0, 1, 1));
+
+        let mut unknown = options();
+        unknown.start_node = Some("nope".to_string());
+        let finished = bench.run(scenario, vec![], unknown);
+        assert_eq!(finished.outcome, Outcome::Failed);
+        assert_eq!(finished.reason.unwrap().code, "notFound");
+    }
+
+    #[test]
+    fn a_breakpoint_pauses_the_run_until_a_step_or_continue() {
+        let bench = Bench::new();
+        let scenario = canvas(
+            "debug",
+            vec![node("s", NodeKind::Start), tick("a"), tick("b"), tick("c"), tick("d")],
+            vec![
+                edge("s", Port::Next, "a"),
+                edge("a", Port::Next, "b"),
+                edge("b", Port::Next, "c"),
+                edge("c", Port::Next, "d"),
+            ],
+        );
+        let mut with_break = options();
+        with_break.debug = Some(Debug { breakpoints: HashSet::from(["b".to_string()]), step: false });
+        bench.start(scenario.clone(), vec![], with_break);
+        assert_eq!(bench.paused_on(), "b");
+        // The block the run stands on has not been run yet.
+        thread::sleep(Duration::from_millis(40));
+        assert_eq!(bench.hub.get().state, RunState::PausedBreak);
+        // One step runs "b" and stops on the next block, which has no breakpoint.
+        bench.engine.resume(Resume::Step);
+        let deadline = Instant::now() + WAIT;
+        while bench.hub.get().step_id.as_deref() != Some("c") || bench.hub.get().state != RunState::PausedBreak {
+            assert!(Instant::now() < deadline, "the step did not stop on the next block");
+            thread::sleep(Duration::from_millis(5));
+        }
+        bench.engine.resume(Resume::Continue);
+        assert_eq!(bench.end().outcome, Outcome::Completed);
+        assert_eq!(passes(&bench.trace("debug"), "d"), 1);
+
+        // A step-by-step run stops on the first block after the start; a stop ends it there.
+        let mut by_step = options();
+        by_step.debug = Some(Debug { breakpoints: HashSet::new(), step: true });
+        bench.start(scenario, vec![], by_step);
+        assert_eq!(bench.paused_on(), "a");
+        bench.engine.stop(AppError::new("userStop"));
+        let finished = bench.end();
+        assert_eq!(finished.outcome, Outcome::Stopped);
+        assert_eq!(passes(&bench.trace("debug"), "b"), 0);
+    }
+
+    #[test]
+    fn a_resume_is_ignored_when_the_run_is_not_paused_on_a_block() {
+        let bench = Bench::new();
+        bench.engine.resume(Resume::Continue);
+        assert!(bench.engine.take_resume().is_none());
+    }
+
+    #[test]
+    fn a_call_block_runs_a_list_and_a_graph_once_whatever_they_repeat() {
+        let bench = Bench::new();
+        let mut list = Scenario::new("list");
+        list.id = "list".to_string();
+        list.repeat = RepeatMode::Forever;
+        list.steps = vec![Step::new(StepKind::Pause { duration: Pause::exact(1) })];
+        let mut inner = canvas(
+            "inner",
+            vec![node("s", NodeKind::Start), tick("x"), node("call", NodeKind::Call { scenario_id: "list".into() })],
+            vec![edge("s", Port::Next, "x"), edge("x", Port::Next, "call")],
+        );
+        inner.repeat = RepeatMode::Count { times: 9 };
+        let mut twice = node("run", NodeKind::Call { scenario_id: "inner".into() });
+        twice.repeat = Some(crate::model::scenario::Repeat { times: 2, pause_between: Pause::default() });
+        let outer = canvas(
+            "outer",
+            vec![node("s", NodeKind::Start), twice, tick("after")],
+            vec![edge("s", Port::Next, "run"), edge("run", Port::Next, "after")],
+        );
+        let finished = bench.run(outer, vec![inner, list], options());
+        assert_eq!(finished.outcome, Outcome::Completed);
+        let trace = bench.trace("outer");
+        // The trace follows the blocks of the scenario that was started only.
+        assert_eq!((passes(&trace, "run"), passes(&trace, "after"), passes(&trace, "x")), (1, 1, 0));
+        assert!(bench.engine.trace("inner").is_none());
+    }
+
+    #[test]
+    fn a_missing_scenario_and_a_stop_inside_a_call_end_the_whole_run() {
+        let bench = Bench::new();
+        let outer = || {
+            canvas(
+                "outer",
+                vec![node("s", NodeKind::Start), node("run", NodeKind::Call { scenario_id: "inner".into() }), tick("after")],
+                vec![edge("s", Port::Next, "run"), edge("run", Port::Next, "after")],
+            )
+        };
+        let finished = bench.run(outer(), vec![], options());
+        assert_eq!(finished.outcome, Outcome::Failed);
+        assert_eq!(finished.reason.unwrap().code, "callMissing");
+
+        let inner = canvas(
+            "inner",
+            vec![node("s", NodeKind::Start), node("halt", NodeKind::Stop)],
+            vec![edge("s", Port::Next, "halt")],
+        );
+        let finished = bench.run(outer(), vec![inner], options());
+        assert_eq!(finished.outcome, Outcome::Stopped);
+        let reason = finished.reason.unwrap();
+        assert_eq!(reason.code, "stopStep");
+        // The message names the block of the started scenario and the block inside.
+        assert!(reason.params.get("step").is_some_and(|step| step.contains(" › ")));
+        assert_eq!(passes(&bench.trace("outer"), "after"), 0);
+    }
+
+    #[test]
+    fn an_intercept_runs_its_branch_and_the_interrupted_block_starts_over() {
+        let bench = Bench::new();
+        let scenario = canvas(
+            "watch",
+            vec![
+                node("s", NodeKind::Start),
+                wait("w", "game.exe", 0),
+                tick("done"),
+                node("i", NodeKind::Intercept { condition: named("popup.exe"), min_interval_ms: 500 }),
+                tick("close"),
+            ],
+            vec![edge("s", Port::Next, "w"), edge("w", Port::Next, "done"), edge("i", Port::Next, "close")],
+        );
+        // The popup shows up once; the game appears only after the popup was closed.
+        let mut popup_seen = false;
+        let mut waited = 0;
+        let options = probed(move |name| match name {
+            "popup.exe" => !std::mem::replace(&mut popup_seen, true),
+            _ => {
+                waited += 1;
+                waited > 3
+            }
+        });
+        let finished = bench.run(scenario, vec![], options);
+        assert_eq!(finished.outcome, Outcome::Completed);
+        let trace = bench.trace("watch");
+        assert_eq!(passes(&trace, "close"), 1);
+        assert_eq!(passes(&trace, "done"), 1);
+        assert_eq!(trace.edge_passes.get("i:next"), Some(&1));
+        let fired = bench.journal("interceptFired");
+        assert_eq!(fired.len(), 1);
+        assert_eq!(fired[0].params.get("name").map(String::as_str), Some("watch"));
+    }
+
+    #[test]
+    fn an_intercept_is_not_looked_at_more_often_than_its_interval() {
+        let bench = Bench::new();
+        let scenario = canvas(
+            "interval",
+            vec![
+                node("s", NodeKind::Start),
+                wait("w", "game.exe", 300),
+                tick("late"),
+                node("i", NodeKind::Intercept { condition: named("popup.exe"), min_interval_ms: 100_000 }),
+                tick("close"),
+            ],
+            vec![edge("s", Port::Next, "w"), edge("w", Port::Timeout, "late"), edge("i", Port::Next, "close")],
+        );
+        let looks = Arc::new(AtomicU64::new(0));
+        let counted = Arc::clone(&looks);
+        let options = probed(move |name| {
+            if name == "popup.exe" {
+                counted.fetch_add(1, Ordering::SeqCst);
+            }
+            false
+        });
+        let finished = bench.run(scenario, vec![], options);
+        assert_eq!(finished.outcome, Outcome::Completed);
+        // The wait polled dozens of times; the intercept was looked at once.
+        assert_eq!(looks.load(Ordering::SeqCst), 1);
+        assert_eq!(passes(&bench.trace("interval"), "close"), 0);
+    }
+
+    #[test]
+    fn a_cycle_that_does_nothing_does_not_spin_and_stops_on_request() {
+        let bench = Bench::new();
+        let scenario = canvas(
+            "spin",
+            vec![node("s", NodeKind::Start), branch("b", "game.exe")],
+            vec![edge("s", Port::Next, "b"), edge("b", Port::No, "b")],
+        );
+        bench.start(scenario, vec![], probed(|_| false));
+        thread::sleep(Duration::from_millis(200));
+        bench.engine.stop(AppError::new("userStop"));
+        let finished = bench.end();
+        assert_eq!(finished.outcome, Outcome::Stopped);
+        // Every lap sleeps at least the delay of an empty pass.
+        assert!(passes(&bench.trace("spin"), "b") <= 200 / EMPTY_PASS_DELAY_MS + 5);
+    }
+
+    #[test]
+    fn a_list_scenario_leaves_no_trace() {
+        let bench = Bench::new();
+        let mut list = Scenario::new("plain");
+        list.id = "plain".to_string();
+        list.steps = vec![Step::new(StepKind::Pause { duration: Pause::exact(1) })];
+        assert_eq!(bench.run(list, vec![], options()).outcome, Outcome::Completed);
+        assert!(bench.engine.trace("plain").is_none());
+        assert!(lock(&bench.traces).is_empty());
     }
 }

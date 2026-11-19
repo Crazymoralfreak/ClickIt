@@ -42,7 +42,9 @@ export function ScenarioList({
               <span className="scenario-item-meta">
                 {item.mode === "window" ? t("scenarios.modeWindow") : t("scenarios.modeScreen")}
                 {" · "}
-                {t("scenarios.stepCount", { count: item.stepCount })}
+                {item.format === "canvas"
+                  ? `${t("scenarios.blockCount", { count: item.stepCount })} · ${t("scenarios.canvasMark")}`
+                  : t("scenarios.stepCount", { count: item.stepCount })}
               </span>
             </button>
             {selected ? (

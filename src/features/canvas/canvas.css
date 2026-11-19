@@ -1,0 +1,1169 @@
+/* The canvas of a scenario: toolbar, list of blocks, the flow itself and the panel of a block. */
+
+.canvas {
+  flex: 1;
+  min-height: 440px;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.canvas-toolbar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.canvas-toolbar-gap {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 4px;
+  background: var(--border);
+}
+
+.canvas-toolbar-note {
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.canvas-toolbar-end {
+  margin-left: auto;
+}
+
+.canvas-toolbar .checkbox {
+  font-size: 13px;
+  gap: 5px;
+}
+
+.canvas-tool-on,
+.canvas-tool-on:hover:not(:disabled) {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.canvas-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.canvas-flow {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+/* The flow takes its size from this box, whatever the height of the column is made of. */
+.canvas-flow-fill {
+  position: absolute;
+  inset: 0;
+}
+
+.canvas-flow .react-flow {
+  --xy-background-color: var(--bg);
+  --xy-background-pattern-color: var(--border);
+  --xy-edge-stroke: var(--text-dim);
+  --xy-edge-stroke-selected: var(--accent);
+  --xy-connectionline-stroke: var(--accent);
+  --xy-connectionline-stroke-width: 2;
+  --xy-selection-background-color: color-mix(in srgb, var(--accent) 10%, transparent);
+  --xy-selection-border: 1px dashed var(--accent);
+  --xy-minimap-background-color: var(--surface);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--bg) 70%, transparent);
+  --xy-controls-button-background-color: var(--surface);
+  --xy-controls-button-background-color-hover: var(--surface-2);
+  --xy-controls-button-color: var(--text);
+  --xy-controls-button-color-hover: var(--text);
+  --xy-controls-button-border-color: var(--border);
+  --xy-controls-box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  --xy-resize-background-color: var(--accent);
+  color: var(--text);
+}
+
+.canvas-flow .react-flow__minimap {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.canvas-flow .react-flow__node:focus,
+.canvas-flow .react-flow__node:focus-visible {
+  outline: none;
+}
+
+.canvas-empty {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  max-width: 70%;
+  padding: 6px 12px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  pointer-events: none;
+  z-index: 4;
+}
+
+/* Blocks */
+
+.block {
+  --role: var(--accent);
+  --shape: inset(0 round 8px);
+  position: relative;
+  width: 220px;
+  height: 84px;
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+  font-size: 13px;
+  transition:
+    opacity 0.15s,
+    filter 0.15s;
+}
+
+.block-entry {
+  --role: var(--ok);
+  --shape: inset(0 round 22px 22px 8px 8px);
+}
+
+.block-check {
+  --role: var(--warning);
+  /* Checks are cut at the corners, so a fork in the flow is seen before its text is read. */
+  --shape: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px);
+}
+
+.block-control {
+  --role: var(--text-dim);
+}
+
+/* The outline is the shape in the colour of the role, the body is the same shape a little smaller. */
+.block-shape,
+.block-shape::after {
+  position: absolute;
+  inset: 0;
+  clip-path: var(--shape);
+}
+
+.block-shape {
+  background: var(--role);
+}
+
+.block-shape::after {
+  content: "";
+  inset: 1.5px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--role) 16%, var(--surface)) 0 28px,
+    var(--surface) 28px
+  );
+}
+
+.block-selected .block-shape {
+  background: var(--accent);
+}
+
+.block-selected .block-shape::after {
+  inset: 2.5px;
+}
+
+.block-selected {
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--accent) 55%, transparent));
+}
+
+.block-head,
+.block-body {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.block-head {
+  flex: none;
+  height: 29px;
+  padding-left: 12px;
+}
+
+.block-check .block-head,
+.block-check .block-body {
+  padding: 0 14px;
+}
+
+.block-icon {
+  flex: none;
+  color: var(--role);
+}
+
+.block-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.block-off .block-title {
+  text-decoration: line-through;
+}
+
+.block-number {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.block-tag {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 15px;
+  font-variant-numeric: tabular-nums;
+}
+
+.block-tag-live {
+  border-color: var(--ok);
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.block-tag-trace {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.block-issue {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--warning);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+.block-issue-error {
+  background: var(--danger);
+}
+
+.block-body {
+  flex: 1;
+  min-height: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.block-thumb {
+  flex: none;
+  max-width: 44px;
+  max-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  object-fit: contain;
+}
+
+.block-summary {
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.block-off,
+.block-unreachable {
+  opacity: 0.55;
+}
+
+.block-dim {
+  opacity: 0.3;
+}
+
+/* Inputs and outputs */
+
+.canvas-flow .block-handle {
+  --port: var(--text-dim);
+  width: 12px;
+  height: 12px;
+  background: var(--port);
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+}
+
+.canvas-flow .block-handle-in {
+  width: 10px;
+  height: 10px;
+  background: var(--surface);
+  border: 2px solid var(--text-dim);
+}
+
+.canvas-flow .block-handle-good {
+  --port: var(--ok);
+}
+
+.canvas-flow .block-handle-bad {
+  --port: var(--danger);
+}
+
+.canvas-flow .block-handle.connectingto,
+.canvas-flow .block-handle.valid {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.block-port,
+.block-end {
+  position: absolute;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.block-port {
+  padding: 0 6px;
+  border: 1px solid var(--text-dim);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.block-port-good {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+
+.block-port-bad {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* The output the last run left the block through. */
+.block-port-taken {
+  background: var(--text-dim);
+  color: var(--surface);
+  font-weight: 600;
+}
+
+.block-port-taken.block-port-good {
+  background: var(--ok);
+}
+
+.block-port-taken.block-port-bad {
+  background: var(--danger);
+}
+
+.block-port-bottom {
+  top: calc(100% + 5px);
+  left: calc(50% + 10px);
+}
+
+.block-port-right {
+  left: calc(100% + 9px);
+  bottom: calc(50% + 5px);
+}
+
+.block-end {
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 12px;
+  opacity: 0.8;
+  pointer-events: all;
+}
+
+.block-end-bad {
+  color: var(--danger);
+}
+
+.block-end-bottom {
+  top: calc(100% + 9px);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.block-end-bottom.block-end-labelled {
+  top: calc(100% + 24px);
+  left: calc(50% + 10px);
+  transform: none;
+}
+
+.block-end-right {
+  left: calc(100% + 10px);
+  top: calc(50% + 6px);
+}
+
+/* Breakpoint: a spot on the left edge of the block */
+
+.block-breakpoint {
+  position: absolute;
+  left: -8px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  padding: 0;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--danger);
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+}
+
+.block:hover .block-breakpoint,
+.block-breakpoint:focus-visible {
+  opacity: 0.35;
+}
+
+.block-breakpoint.block-breakpoint-set {
+  opacity: 1;
+}
+
+/* A run on the canvas */
+
+.block-live {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 5px);
+  max-width: 300px;
+  padding: 1px 8px;
+  border-radius: 9px;
+  background: var(--text-dim);
+  color: var(--surface);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+
+.block-live-active {
+  background: var(--ok);
+}
+
+.block-paused .block-live-active {
+  background: var(--warning);
+}
+
+.block-live-failed {
+  background: var(--danger);
+}
+
+.block-live-time {
+  font-variant-numeric: tabular-nums;
+}
+
+.block-active {
+  filter: drop-shadow(0 0 6px var(--ok));
+  animation: block-pulse 1.1s ease-in-out infinite;
+}
+
+.block-active .block-shape {
+  background: var(--ok);
+}
+
+.block-active .block-shape::after {
+  inset: 2.5px;
+}
+
+.block-paused {
+  filter: drop-shadow(0 0 6px var(--warning));
+  animation: none;
+}
+
+.block-paused .block-shape {
+  background: var(--warning);
+}
+
+.block-ended-failed .block-shape {
+  background: var(--danger);
+}
+
+.block-ended-failed .block-shape::after,
+.block-ended-stopped .block-shape::after,
+.block-ended-completed .block-shape::after {
+  inset: 2.5px;
+}
+
+@keyframes block-pulse {
+  50% {
+    filter: drop-shadow(0 0 13px var(--ok));
+  }
+}
+
+/* How much of a timeout or a pause is left. */
+.block-progress {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: 5px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--ok);
+  transform-origin: left center;
+  animation: block-progress linear forwards;
+}
+
+@keyframes block-progress {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* Every look at the condition. */
+.block-check-flash {
+  position: absolute;
+  top: 9px;
+  right: 34px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--ok);
+  opacity: 0;
+  animation: block-check 0.45s ease-out;
+}
+
+@keyframes block-check {
+  from {
+    opacity: 1;
+    transform: scale(1.6);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1);
+  }
+}
+
+/* Added or changed by the assistant a moment ago. */
+.block-changed {
+  animation: block-changed 4s ease-out;
+}
+
+.block-changed .block-shape {
+  background: var(--ok);
+}
+
+.block-changed .block-shape::after {
+  inset: 2.5px;
+}
+
+@keyframes block-changed {
+  0%,
+  60% {
+    filter: drop-shadow(0 0 9px var(--ok));
+  }
+  100% {
+    filter: none;
+  }
+}
+
+/* Links */
+
+.flow-edge {
+  --edge: var(--text-dim);
+}
+
+.flow-edge-good {
+  --edge: var(--ok);
+}
+
+.flow-edge-bad {
+  --edge: var(--danger);
+}
+
+.canvas-flow .flow-edge .flow-edge-line {
+  stroke: var(--edge);
+  stroke-width: 1.8;
+}
+
+.flow-edge-arrow {
+  fill: var(--edge);
+}
+
+/* A link back to a block already on the way is a loop. */
+.flow-edge-back .flow-edge-line {
+  stroke-dasharray: 7 5;
+}
+
+.canvas-flow .flow-edge-passed .flow-edge-line {
+  stroke-width: 3;
+}
+
+.canvas-flow .flow-edge-selected .flow-edge-line {
+  stroke-width: 3;
+  filter: drop-shadow(0 0 3px var(--edge));
+}
+
+.flow-edge-dim {
+  opacity: 0.22;
+}
+
+/* The link a pass has just taken: it lights up and fades in a few seconds. */
+.flow-edge-flash {
+  fill: none;
+  stroke: var(--edge);
+  stroke-width: 6;
+  stroke-linecap: round;
+  opacity: 0;
+  pointer-events: none;
+  animation: flow-edge-flash 4s ease-out;
+}
+
+@keyframes flow-edge-flash {
+  0%,
+  25% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* A dot that runs along the link: one short dash of a path whose length counts as 100. */
+.flow-edge-runner {
+  fill: none;
+  stroke: var(--edge);
+  stroke-width: 9;
+  stroke-linecap: round;
+  stroke-dasharray: 0.1 200;
+  stroke-dashoffset: 0;
+  opacity: 0;
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px var(--edge));
+  animation: flow-edge-run 0.55s linear;
+}
+
+@keyframes flow-edge-run {
+  from {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+  to {
+    opacity: 1;
+    stroke-dashoffset: -100;
+  }
+}
+
+.flow-bend {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: move;
+  pointer-events: all;
+}
+
+/* Notes and frames */
+
+.note,
+.frame,
+.frame-collapsed {
+  --note-color: var(--text-dim);
+  width: 100%;
+  height: 100%;
+}
+
+.note {
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--note-color) 16%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--note-color) 55%, var(--surface));
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.note-selected,
+.frame-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.note-text {
+  height: 100%;
+  overflow: hidden;
+  font-size: 13px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note-text-empty {
+  color: var(--text-dim);
+}
+
+.frame {
+  background: color-mix(in srgb, var(--note-color) 7%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--note-color) 60%, transparent);
+  border-radius: 10px;
+}
+
+/* An open frame lets clicks through to the blocks and links inside it. */
+.canvas-flow .react-flow__node.canvas-frame-node {
+  pointer-events: none !important;
+}
+
+.canvas-frame-node .frame-head,
+.canvas-frame-node .react-flow__resize-control {
+  pointer-events: all;
+}
+
+.frame-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px 0 6px;
+  border-radius: 9px 9px 0 0;
+  background: color-mix(in srgb, var(--note-color) 16%, var(--surface));
+  cursor: grab;
+}
+
+.frame-title {
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.frame-toggle {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.frame-toggle:hover {
+  background: color-mix(in srgb, var(--note-color) 25%, transparent);
+}
+
+.frame-mark {
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 6px solid var(--text-dim);
+}
+
+.frame-mark-open {
+  transform: rotate(90deg);
+}
+
+.frame-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 6px;
+  background: color-mix(in srgb, var(--note-color) 14%, var(--surface));
+  border: 1.5px solid color-mix(in srgb, var(--note-color) 70%, var(--surface));
+  border-radius: 10px;
+  box-shadow: 3px 3px 0 color-mix(in srgb, var(--note-color) 30%, transparent);
+}
+
+.frame-collapsed-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.frame-count {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.frame-running {
+  border-color: var(--ok);
+  filter: drop-shadow(0 0 6px var(--ok));
+}
+
+.canvas-flow .note-resize-line {
+  border-color: var(--accent);
+}
+
+.canvas-flow .note-resize-handle {
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+  border: 1px solid var(--surface);
+  border-radius: 2px;
+}
+
+/* The list of blocks */
+
+.canvas-palette {
+  flex: none;
+  width: 190px;
+  padding: 8px;
+  overflow: auto;
+  border-right: 1px solid var(--border);
+}
+
+.palette-hint,
+.palette-empty {
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.palette-hint {
+  margin-bottom: 6px;
+}
+
+.palette-empty {
+  padding: 2px 4px;
+}
+
+.palette-group + .palette-group {
+  margin-top: 8px;
+}
+
+.palette-group-title {
+  margin-bottom: 3px;
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.palette-item {
+  --role: var(--accent);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px;
+  margin-bottom: 3px;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--role);
+  border-radius: var(--radius);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.palette-item:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.palette-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.palette-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.palette-item-entry {
+  --role: var(--ok);
+}
+
+.palette-item-check {
+  --role: var(--warning);
+}
+
+.palette-item-control,
+.palette-item-snippet {
+  --role: var(--text-dim);
+}
+
+.palette-item-snippet {
+  border-left-style: dashed;
+}
+
+.palette-item-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.palette-snippet {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+
+.palette-snippet-delete {
+  flex: none;
+  width: 22px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.palette-snippet-delete:hover {
+  background: var(--surface-2);
+  color: var(--danger);
+}
+
+.palette-ghost {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  padding: 4px 10px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-size: 13px;
+  box-shadow: var(--shadow);
+  pointer-events: none;
+  z-index: 70;
+}
+
+.canvas-popup {
+  position: absolute;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.canvas-popup-palette {
+  width: 220px;
+  max-height: 330px;
+  padding: 8px;
+  overflow: auto;
+}
+
+.canvas-menu {
+  min-width: 190px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.canvas-menu-item {
+  padding: 6px 10px;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.canvas-menu-item:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.canvas-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.canvas-menu-item-danger {
+  color: var(--danger);
+}
+
+/* The panel of the selected block or note */
+
+.canvas-inspector {
+  flex: none;
+  width: 330px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+}
+
+.inspector-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 8px 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.inspector-type {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspector-close {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.inspector-close:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.inspector-body {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 12px 10px;
+  overflow: auto;
+}
+
+/* The panel is narrow: a label goes above its field. */
+.canvas-inspector .field {
+  flex-direction: column;
+  gap: 2px;
+  padding: 5px 0;
+}
+
+.canvas-inspector .field-label {
+  width: auto;
+  padding-top: 0;
+  font-size: 13px;
+}
+
+.canvas-inspector .field-label:empty {
+  display: none;
+}
+
+.canvas-inspector .field-body {
+  width: 100%;
+}
+
+.canvas-inspector .editor-wide-input,
+.inspector-wide {
+  width: 100%;
+}
+
+.canvas-inspector .template-preview img {
+  max-width: 150px;
+}
+
+.inspector-check {
+  padding: 5px 0;
+}
+
+.inspector-issues {
+  padding: 6px 0 2px;
+}
+
+.inspector-colors {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.inspector-color {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  outline: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.inspector-color-none {
+  background: var(--text-dim);
+}
+
+.inspector-color-on {
+  outline: 2px solid var(--accent);
+}
+
+.inspector-color:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.inspector-trace {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 13px;
+  user-select: text;
+}
+
+.inspector-trace-failed {
+  color: var(--danger);
+}
+
+.inspector-actions {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* The outline and the labels stay, the motion goes. */
+@media (prefers-reduced-motion: reduce) {
+  .block,
+  .block-active,
+  .block-changed {
+    animation: none;
+    transition: none;
+  }
+
+  .block-progress,
+  .block-check-flash,
+  .flow-edge-runner {
+    display: none;
+  }
+
+  .flow-edge-flash {
+    animation-timing-function: step-end;
+  }
+}

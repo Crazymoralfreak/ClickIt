@@ -5,11 +5,17 @@ import { useT } from "../../i18n";
 import { MAX_COUNTDOWN_SEC, type Language } from "../../types/scenario";
 import { Button, Checkbox, Field, NumberInput, PageFrame, Section, Select, TextInput } from "../../ui";
 import { BlockedProcesses } from "./BlockedProcesses";
+import { DataCleanup } from "./DataCleanup";
 import { HotkeyInput } from "./HotkeyInput";
 import "./settings.css";
 
 const DEFAULT_HOTKEY_START_STOP = "F6";
 const DEFAULT_HOTKEY_CAPTURE = "F8";
+const DEFAULT_HOTKEY_STEP = "F10";
+const DEFAULT_HOTKEY_CONTINUE = "F9";
+const DEFAULT_HOTKEY_RECORD_PAUSE = "F7";
+const DEFAULT_HOTKEY_RECORD_WAIT_IMAGE = "Shift+F8";
+const DEFAULT_HOTKEY_RECORD_CLICK_IMAGE = "Ctrl+F8";
 const OLLAMA_ENDPOINT = "http://127.0.0.1:11434/v1";
 const LM_STUDIO_ENDPOINT = "http://127.0.0.1:1234/v1";
 
@@ -37,10 +43,12 @@ interface HotkeyFieldProps {
   value: string;
   fallback: string;
   disabled: boolean;
+  /** An empty value is allowed: the hotkey is not assigned. */
+  clearable?: boolean;
   onChange: (hotkey: string) => void;
 }
 
-function HotkeyField({ label, hint, value, fallback, disabled, onChange }: HotkeyFieldProps) {
+function HotkeyField({ label, hint, value, fallback, disabled, clearable, onChange }: HotkeyFieldProps) {
   const { t } = useT();
   return (
     <Field label={label} hint={hint}>
@@ -52,6 +60,11 @@ function HotkeyField({ label, hint, value, fallback, disabled, onChange }: Hotke
       >
         {t("settings.hotkeyReset")}
       </Button>
+      {clearable ? (
+        <Button disabled={disabled || value === ""} title={t("settings.hotkeyClearTitle")} onClick={() => onChange("")}>
+          {t("settings.hotkeyClear")}
+        </Button>
+      ) : null}
     </Field>
   );
 }
@@ -138,6 +151,49 @@ export function SettingsPage() {
           fallback={DEFAULT_HOTKEY_CAPTURE}
           disabled={locked}
           onChange={(hotkeyCapture) => void saveSettings({ ...settings, hotkeyCapture })}
+        />
+        <HotkeyField
+          label={t("settings.hotkeyStep")}
+          value={settings.hotkeyStep}
+          fallback={DEFAULT_HOTKEY_STEP}
+          disabled={locked}
+          onChange={(hotkeyStep) => void saveSettings({ ...settings, hotkeyStep })}
+        />
+        <HotkeyField
+          label={t("settings.hotkeyContinue")}
+          hint={t("settings.hotkeyDebugHint")}
+          value={settings.hotkeyContinue}
+          fallback={DEFAULT_HOTKEY_CONTINUE}
+          disabled={locked}
+          onChange={(hotkeyContinue) => void saveSettings({ ...settings, hotkeyContinue })}
+        />
+        <div className="field-hint settings-hotkey-group">{t("settings.hotkeyRecordGroup")}</div>
+        <HotkeyField
+          label={t("settings.hotkeyRecordPause")}
+          hint={t("settings.hotkeyRecordPauseHint")}
+          value={settings.hotkeyRecordPause}
+          fallback={DEFAULT_HOTKEY_RECORD_PAUSE}
+          disabled={locked}
+          clearable
+          onChange={(hotkeyRecordPause) => void saveSettings({ ...settings, hotkeyRecordPause })}
+        />
+        <HotkeyField
+          label={t("settings.hotkeyRecordWaitImage")}
+          hint={t("settings.hotkeyRecordWaitImageHint")}
+          value={settings.hotkeyRecordWaitImage}
+          fallback={DEFAULT_HOTKEY_RECORD_WAIT_IMAGE}
+          disabled={locked}
+          clearable
+          onChange={(hotkeyRecordWaitImage) => void saveSettings({ ...settings, hotkeyRecordWaitImage })}
+        />
+        <HotkeyField
+          label={t("settings.hotkeyRecordClickImage")}
+          hint={t("settings.hotkeyRecordClickImageHint")}
+          value={settings.hotkeyRecordClickImage}
+          fallback={DEFAULT_HOTKEY_RECORD_CLICK_IMAGE}
+          disabled={locked}
+          clearable
+          onChange={(hotkeyRecordClickImage) => void saveSettings({ ...settings, hotkeyRecordClickImage })}
         />
         <div className="field-hint">{locked ? t("settings.hotkeysLocked") : t("settings.hotkeyHint")}</div>
       </Section>
@@ -288,6 +344,7 @@ export function SettingsPage() {
         <Field label={t("settings.dataDir")}>
           <span className="settings-path">{info.dataDir}</span>
         </Field>
+        <DataCleanup />
       </Section>
     </PageFrame>
   );

@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::graph::{Graph, GRAPH_VERSION};
+
 /// Steps stored in one scenario file, nested ones included.
 pub const MAX_STEPS: usize = 500;
 /// Shared nesting limit for "If" and "Loop" blocks.
@@ -284,6 +286,28 @@ pub struct Step {
     pub kind: StepKind,
 }
 
+/// What the editor puts into a new "Wait" step.
+pub const DEFAULT_POLL_MS: i64 = 200;
+pub const DEFAULT_WAIT_TIMEOUT_MS: i64 = 10_000;
+pub const DEFAULT_THRESHOLD: f64 = 0.9;
+
+impl StepKind {
+    /// "Wait for the image", with a click on it or without, the way the editor makes it.
+    pub fn wait_image(template: String, area: Area, click: bool) -> Self {
+        StepKind::Wait {
+            condition: Condition::ImageFound { template, area, threshold: DEFAULT_THRESHOLD },
+            poll_ms: DEFAULT_POLL_MS,
+            timeout_ms: DEFAULT_WAIT_TIMEOUT_MS,
+            on_timeout: OnTimeout::Stop,
+            on_found: if click {
+                OnFound::Click { button: MouseButton::Left, offset_x: 0, offset_y: 0 }
+            } else {
+                OnFound::None
+            },
+        }
+    }
+}
+
 impl Step {
     pub fn new(kind: StepKind) -> Self {
         Self { id: new_id("s"), enabled: true, pause_after: Pause::default(), repeat: None, kind }
@@ -319,6 +343,9 @@ pub struct Scenario {
     pub pause_between_rounds: Pause,
     #[serde(default)]
     pub steps: Vec<Step>,
+    /// Set for a scenario drawn on the canvas; `steps` is empty then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub graph: Option<Graph>,
 }
 
 impl Scenario {
@@ -333,30 +360,67 @@ impl Scenario {
             repeat: RepeatMode::Once,
             pause_between_rounds: Pause::default(),
             steps: Vec::new(),
+            graph: None,
         }
     }
 
+    /// A canvas scenario with nothing but its start block.
+    pub fn new_canvas(name: &str) -> Self {
+        Self { version: GRAPH_VERSION, graph: Some(Graph::new()), ..Self::new(name) }
+    }
+
+    /// The version the file of this scenario is written with.
+    pub fn format_version(&self) -> u32 {
+        if self.graph.is_some() {
+            GRAPH_VERSION
+        } else {
+            SCENARIO_VERSION
+        }
+    }
+
+    /// `"canvas"` or `"list"`, as the tools and the interface name the two forms.
+    pub fn format(&self) -> &'static str {
+        if self.graph.is_some() {
+            "canvas"
+        } else {
+            "list"
+        }
+    }
+
+    /// Steps of a list, nested ones included, or blocks of a graph without its start.
     pub fn step_count(&self) -> usize {
-        count_steps(&self.steps)
+        match &self.graph {
+            Some(graph) => graph.block_count(),
+            None => count_steps(&self.steps),
+        }
     }
 
     /// Template file names referenced by any condition in the scenario.
     pub fn templates(&self) -> Vec<String> {
         let mut out = Vec::new();
         collect_templates(&self.steps, &mut out);
+        if let Some(graph) = &self.graph {
+            graph.collect_templates(&mut out);
+        }
         out.sort();
         out.dedup();
         out
     }
 
-    /// Fills steps the caller left without an id, including nested ones.
+    /// Fills steps and blocks the caller left without an id, including nested ones.
     pub fn fill_empty_ids(&mut self) {
         fill_empty_ids(&mut self.steps);
+        if let Some(graph) = &mut self.graph {
+            graph.fill_empty_ids();
+        }
     }
 
-    /// Gives every step a fresh id; used by duplicate and import.
+    /// Gives every step and block a fresh id; used by duplicate and import.
     pub fn renew_step_ids(&mut self) {
         renew_ids(&mut self.steps);
+        if let Some(graph) = &mut self.graph {
+            graph.renew_ids();
+        }
     }
 }
 

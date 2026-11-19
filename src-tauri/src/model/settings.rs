@@ -14,6 +14,17 @@ pub struct Settings {
     /// Hotkeys as `Ctrl+Shift+F6`: modifiers plus a W3C key code name.
     pub hotkey_start_stop: String,
     pub hotkey_capture: String,
+    /// Held only while a run with breakpoints is going: one block further, and on to the next breakpoint.
+    pub hotkey_step: String,
+    pub hotkey_continue: String,
+    /// Held only while a recording is going: pause and resume, and the two that cut
+    /// an image out of the screen and add a step that waits for it. Empty means "not assigned".
+    #[serde(default = "default_record_pause")]
+    pub hotkey_record_pause: String,
+    #[serde(default = "default_record_wait_image")]
+    pub hotkey_record_wait_image: String,
+    #[serde(default = "default_record_click_image")]
+    pub hotkey_record_click_image: String,
     /// Countdown before a manual start, 0..=10 seconds. 0 turns it off.
     pub countdown_sec: u32,
     /// Stop when the cursor hits the top-left corner of the primary monitor.
@@ -39,12 +50,29 @@ pub struct Settings {
     pub current: Option<RunTarget>,
 }
 
+fn default_record_pause() -> String {
+    "F7".to_string()
+}
+
+fn default_record_wait_image() -> String {
+    "Shift+F8".to_string()
+}
+
+fn default_record_click_image() -> String {
+    "Ctrl+F8".to_string()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
             language: None,
             hotkey_start_stop: "F6".to_string(),
             hotkey_capture: "F8".to_string(),
+            hotkey_step: "F10".to_string(),
+            hotkey_continue: "F9".to_string(),
+            hotkey_record_pause: "F7".to_string(),
+            hotkey_record_wait_image: "Shift+F8".to_string(),
+            hotkey_record_click_image: "Ctrl+F8".to_string(),
             countdown_sec: 3,
             corner_stop: true,
             blocked_processes: Vec::new(),

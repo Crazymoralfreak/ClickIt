@@ -1,6 +1,10 @@
+import { useState } from "react";
+import { api } from "../../api";
+import { useApp } from "../../app/context";
 import { useT } from "../../i18n";
+import type { CheckResult } from "../../types/runtime";
 import type { Condition, ConditionKind, ScenarioMode, TitleMatch, WindowTarget } from "../../types/scenario";
-import { Field, NumberInput, Select, TextInput, type Option } from "../../ui";
+import { Button, Field, NumberInput, Select, TextInput, cx, type Option } from "../../ui";
 import { CONDITION_KINDS, switchCondition } from "./defaults";
 import { ImageConditionFields } from "./ImageConditionFields";
 import { PositionInput } from "./PositionInput";
@@ -16,6 +20,78 @@ interface ConditionEditorProps {
 }
 
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
+
+/** What "Check now" has to say; the answer belongs to the condition it was asked about. */
+type Check = { state: "idle" } | { state: "running" } | { state: "done"; about: Condition; result: CheckResult };
+
+interface CheckNowProps {
+  value: Condition;
+  mode: ScenarioMode;
+  target: WindowTarget;
+  scenarioId: string;
+}
+
+/** One look at the condition, the way a run does it. Nothing is clicked. */
+function CheckNow({ value, mode, target, scenarioId }: CheckNowProps) {
+  const { t } = useT();
+  const { locked, showError } = useApp();
+  const [check, setCheck] = useState<Check>({ state: "idle" });
+
+  const run = async () => {
+    setCheck({ state: "running" });
+    try {
+      const result = await api.conditionCheck(scenarioId, mode, target, value);
+      setCheck({ state: "done", about: value, result });
+    } catch (error) {
+      setCheck({ state: "idle" });
+      showError(error);
+    }
+  };
+
+  // An answer about a condition that was edited since says nothing about this one.
+  const result = check.state === "done" && check.about === value ? check.result : null;
+  const lines: string[] = [];
+  if (result) {
+    const percent = (score: number) => Math.round(score * 100);
+    if (result.found === true && result.x !== null && result.y !== null) {
+      const inWindow = mode === "window" && result.clientX !== null && result.clientY !== null;
+      lines.push(
+        t("conditions.checkFound", {
+          x: inWindow && result.clientX !== null ? result.clientX : result.x,
+          y: inWindow && result.clientY !== null ? result.clientY : result.y,
+          score: result.score === null ? "—" : percent(result.score),
+        }),
+      );
+    } else if (result.found === false) {
+      lines.push(t("conditions.checkNotFound"));
+      if (result.wouldMatchAt !== null) {
+        lines.push(t("conditions.checkWould", { score: percent(result.wouldMatchAt) }));
+      }
+    }
+    if (result.color !== null) {
+      lines.push(t("conditions.checkColor", { color: result.color }));
+    }
+    lines.push(t("conditions.checkTime", { ms: result.ms }));
+  }
+
+  return (
+    <Field label="" hint={result ? undefined : t("conditions.checkHint")}>
+      <Button disabled={locked || check.state === "running"} onClick={() => void run()}>
+        {check.state === "running" ? t("conditions.checkRunning") : t("conditions.checkNow")}
+      </Button>
+      {result ? (
+        <div className="condition-check" role="status">
+          <span className={cx("condition-check-verdict", result.holds ? "condition-check-yes" : "condition-check-no")}>
+            {result.holds ? t("conditions.checkHolds") : t("conditions.checkFails")}
+          </span>
+          {lines.map((line) => (
+            <span key={line}>{line}</span>
+          ))}
+        </div>
+      ) : null}
+    </Field>
+  );
+}
 
 /** Condition of a "Wait", "If" or "Repeat while" step. */
 export function ConditionEditor({ value, onChange, mode, target, scenarioId, disabled }: ConditionEditorProps) {
@@ -134,6 +210,7 @@ export function ConditionEditor({ value, onChange, mode, target, scenarioId, dis
         />
       </Field>
       {fields()}
+      <CheckNow value={value} mode={mode} target={target} scenarioId={scenarioId} />
     </>
   );
 }

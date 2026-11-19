@@ -56,7 +56,7 @@ export function HotkeyInput({ value, onChange, label, disabled }: HotkeyInputPro
       type="text"
       readOnly
       className={cx("input", "settings-hotkey", listening && "settings-hotkey-listening")}
-      value={listening ? t("settings.hotkeyPress") : value}
+      value={listening ? t("settings.hotkeyPress") : value === "" ? t("settings.hotkeyNone") : value}
       disabled={disabled}
       aria-label={label}
       onFocus={() => setListening(true)}

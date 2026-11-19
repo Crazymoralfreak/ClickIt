@@ -1,6 +1,9 @@
 //! Export and import of one scenario as a `.clickit` file: a zip archive with
-//! `scenario.json` and the template images of the scenario.
+//! `scenario.json` and the template images of the scenario. A graph is stored
+//! in the same `scenario.json` with version 2, and the scenarios it runs come
+//! along under `calls/<id>/`.
 
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -11,20 +14,24 @@ use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::error::{AppError, AppResult};
-use crate::model::scenario::{new_id, Scenario, MAX_STEPS, SCENARIO_VERSION};
-use crate::storage::{valid_template_name, Store};
+use crate::model::graph::GRAPH_VERSION;
+use crate::model::scenario::{new_id, Scenario, MAX_STEPS};
+use crate::storage::{valid_id, valid_template_name, Store};
 
 pub const EXTENSION: &str = "clickit";
 const SCENARIO_ENTRY: &str = "scenario.json";
+const CALLS_DIR: &str = "calls";
 /// A file from somewhere else must not be able to fill the memory.
 const MAX_SCENARIO_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_TEMPLATE_BYTES: u64 = 32 * 1024 * 1024;
+/// Scenarios one file may carry besides the main one.
+const MAX_CALLEES: usize = 64;
 
 fn message(error: impl ToString) -> String {
     error.to_string()
 }
 
-/// Writes the scenario and the template images it refers to into `path`.
+/// Writes the scenario, the scenarios it runs and the template images they refer to into `path`.
 pub fn export(store: &Store, id: &str, path: &Path) -> AppResult<()> {
     let scenario = store.load_scenario(id)?;
     let written = write_archive(store, &scenario, path);
@@ -34,21 +41,49 @@ pub fn export(store: &Store, id: &str, path: &Path) -> AppResult<()> {
     written.map_err(|text| AppError::new("exportFailed").with("message", text))
 }
 
+/// Scenarios the given one runs, directly or through others. The ones that
+/// are gone are left out: the import shows the same broken block.
+fn callees_of(store: &Store, scenario: &Scenario) -> Vec<Scenario> {
+    let mut found: Vec<Scenario> = Vec::new();
+    let mut pending: Vec<String> = scenario.graph.as_ref().map(|graph| graph.callees()).unwrap_or_default();
+    while let Some(id) = pending.pop() {
+        if id == scenario.id || found.iter().any(|known| known.id == id) || found.len() >= MAX_CALLEES {
+            continue;
+        }
+        let Ok(callee) = store.load_scenario(&id) else {
+            continue;
+        };
+        pending.extend(callee.graph.as_ref().map(|graph| graph.callees()).unwrap_or_default());
+        found.push(callee);
+    }
+    found
+}
+
 fn write_archive(store: &Store, scenario: &Scenario, path: &Path) -> Result<(), String> {
-    let json = serde_json::to_string_pretty(scenario).map_err(message)?;
     let mut archive = ZipWriter::new(File::create(path).map_err(message)?);
+    write_scenario(store, &mut archive, scenario, "")?;
+    for callee in callees_of(store, scenario) {
+        write_scenario(store, &mut archive, &callee, &format!("{CALLS_DIR}/{}/", callee.id))?;
+    }
+    archive.finish().map_err(message)?;
+    Ok(())
+}
+
+fn write_scenario(store: &Store, archive: &mut ZipWriter<File>, scenario: &Scenario, prefix: &str) -> Result<(), String> {
+    let mut stored = scenario.clone();
+    stored.version = stored.format_version();
+    let json = serde_json::to_string_pretty(&stored).map_err(message)?;
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
-    archive.start_file(SCENARIO_ENTRY, options).map_err(message)?;
+    archive.start_file(format!("{prefix}{SCENARIO_ENTRY}"), options).map_err(message)?;
     archive.write_all(json.as_bytes()).map_err(message)?;
     for name in scenario.templates() {
         // A template that is already missing stays missing after the import.
         let Ok(bytes) = store.template_path(&scenario.id, &name).and_then(|source| Ok(fs::read(source)?)) else {
             continue;
         };
-        archive.start_file(name, options).map_err(message)?;
+        archive.start_file(format!("{prefix}{name}"), options).map_err(message)?;
         archive.write_all(&bytes).map_err(message)?;
     }
-    archive.finish().map_err(message)?;
     Ok(())
 }
 
@@ -58,21 +93,25 @@ struct Imported {
     templates: Vec<(String, Vec<u8>)>,
 }
 
-/// Adds the scenario from `path` as a new one. A broken file changes nothing on the disk.
+/// Adds the scenario from `path` as a new one, together with the scenarios it
+/// runs. A broken file changes nothing on the disk.
 pub fn import(store: &Store, path: &Path) -> AppResult<Scenario> {
-    let Imported { scenario, templates } =
-        read_archive(path).map_err(|text| AppError::new("importBad").with("message", text))?;
-    let stored = store.save_scenario(&scenario).and_then(|()| {
-        for (name, bytes) in &templates {
+    let imported = read_archive(path).map_err(|text| AppError::new("importBad").with("message", text))?;
+    let stored = imported.iter().try_for_each(|Imported { scenario, templates }| {
+        store.save_scenario(scenario)?;
+        for (name, bytes) in templates {
             fs::write(store.template_path(&scenario.id, name)?, bytes)?;
         }
         Ok(())
     });
     if let Err(error) = stored {
-        let _ = store.delete_scenario(&scenario.id);
+        for Imported { scenario, .. } in &imported {
+            let _ = store.delete_scenario(&scenario.id);
+        }
         return Err(error);
     }
-    Ok(scenario)
+    // The main scenario is the first one.
+    imported.into_iter().next().map(|main| main.scenario).ok_or_else(|| AppError::new("importBad"))
 }
 
 fn read_entry(archive: &mut ZipArchive<File>, name: &str, limit: u64) -> Result<Option<Vec<u8>>, String> {
@@ -89,39 +128,78 @@ fn read_entry(archive: &mut ZipArchive<File>, name: &str, limit: u64) -> Result<
     Ok(Some(bytes))
 }
 
-/// Reads and checks everything before anything is written.
-fn read_archive(path: &Path) -> Result<Imported, String> {
-    let mut archive = ZipArchive::new(File::open(path).map_err(message)?).map_err(message)?;
-    let json = read_entry(&mut archive, SCENARIO_ENTRY, MAX_SCENARIO_BYTES)?
-        .ok_or_else(|| format!("{SCENARIO_ENTRY} is missing"))?;
+/// One scenario of the archive with its images, as it was written. `None` when it is not there.
+fn read_scenario(archive: &mut ZipArchive<File>, prefix: &str) -> Result<Option<Imported>, String> {
+    let entry = format!("{prefix}{SCENARIO_ENTRY}");
+    let Some(json) = read_entry(archive, &entry, MAX_SCENARIO_BYTES)? else {
+        return Ok(None);
+    };
     let json = String::from_utf8(json).map_err(message)?;
-    let mut scenario: Scenario = serde_json::from_str(json.trim_start_matches('\u{feff}')).map_err(message)?;
-    if scenario.version > SCENARIO_VERSION {
+    let scenario: Scenario = serde_json::from_str(json.trim_start_matches('\u{feff}')).map_err(message)?;
+    if scenario.version > GRAPH_VERSION {
         return Err(format!("made by a newer ClickIt (format {})", scenario.version));
     }
-    if scenario.step_count() > MAX_STEPS {
+    let size = scenario.graph.as_ref().map_or(scenario.step_count(), |graph| graph.nodes.len());
+    if size > MAX_STEPS {
         return Err(format!("more than {MAX_STEPS} steps"));
     }
-    if scenario.name.trim().is_empty() {
-        scenario.name = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("ClickIt").to_string();
-    }
-    // The copy is a scenario of its own: nothing in it points at the original.
-    scenario.id = new_id("sc");
-    scenario.version = SCENARIO_VERSION;
-    scenario.renew_step_ids();
-
     let mut templates = Vec::new();
     for name in scenario.templates() {
         if !valid_template_name(&name) {
             return Err(format!("bad template name {name}"));
         }
-        if let Some(bytes) = read_entry(&mut archive, &name, MAX_TEMPLATE_BYTES)? {
+        if let Some(bytes) = read_entry(archive, &format!("{prefix}{name}"), MAX_TEMPLATE_BYTES)? {
             image::load_from_memory_with_format(&bytes, ImageFormat::Png)
                 .map_err(|error| format!("{name}: {error}"))?;
             templates.push((name, bytes));
         }
     }
-    Ok(Imported { scenario, templates })
+    Ok(Some(Imported { scenario, templates }))
+}
+
+/// Reads and checks everything before anything is written. The main scenario
+/// comes first, the ones it runs follow.
+fn read_archive(path: &Path) -> Result<Vec<Imported>, String> {
+    let mut archive = ZipArchive::new(File::open(path).map_err(message)?).map_err(message)?;
+    let mut main =
+        read_scenario(&mut archive, "")?.ok_or_else(|| format!("{SCENARIO_ENTRY} is missing"))?;
+    if main.scenario.name.trim().is_empty() {
+        main.scenario.name = path.file_stem().and_then(|stem| stem.to_str()).unwrap_or("ClickIt").to_string();
+    }
+    let mut all = vec![main];
+    let mut at = 0;
+    while at < all.len() {
+        let wanted = all[at].scenario.graph.as_ref().map(|graph| graph.callees()).unwrap_or_default();
+        for id in wanted {
+            if !valid_id(&id) || all.iter().any(|known| known.scenario.id == id) {
+                continue;
+            }
+            if all.len() > MAX_CALLEES {
+                return Err(format!("more than {MAX_CALLEES} scenarios inside"));
+            }
+            // A scenario that was not put into the file stays a broken block.
+            if let Some(mut callee) = read_scenario(&mut archive, &format!("{CALLS_DIR}/{id}/"))? {
+                callee.scenario.id = id;
+                all.push(callee);
+            }
+        }
+        at += 1;
+    }
+    // The copies are scenarios of their own: nothing in them points at the originals.
+    let renamed: HashMap<String, String> =
+        all.iter().map(|imported| (imported.scenario.id.clone(), new_id("sc"))).collect();
+    for Imported { scenario, .. } in &mut all {
+        if let Some(id) = renamed.get(&scenario.id) {
+            scenario.id = id.clone();
+        }
+        scenario.version = scenario.format_version();
+        scenario.revision = 0;
+        scenario.renew_step_ids();
+        if let Some(graph) = &mut scenario.graph {
+            graph.remap_calls(&renamed);
+        }
+    }
+    Ok(all)
 }
 
 #[cfg(test)]
@@ -171,6 +249,55 @@ mod tests {
         let error = import(&store, &file).unwrap_err();
         assert_eq!(error.code, "importBad");
         assert_eq!(store.list_scenarios().len(), 1);
+        let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn a_graph_travels_as_version_two_with_the_scenarios_it_runs() {
+        use crate::model::graph::{Edge, Node, NodeKind, Port};
+
+        let store = temp_store();
+        let mut callee = Scenario::new("Callee");
+        callee.steps = vec![Step::new(StepKind::Wait {
+            condition: Condition::ImageFound { template: "tpl-c.png".to_string(), area: Area::Screen, threshold: 0.9 },
+            poll_ms: 200,
+            timeout_ms: 0,
+            on_timeout: OnTimeout::Stop,
+            on_found: OnFound::None,
+        })];
+        store.save_scenario(&callee).unwrap();
+        image::RgbaImage::new(3, 2).save(store.template_path(&callee.id, "tpl-c.png").unwrap()).unwrap();
+
+        let mut caller = Scenario::new_canvas("Caller");
+        let graph = caller.graph.as_mut().unwrap();
+        let call = Node::new(NodeKind::Call { scenario_id: callee.id.clone() });
+        graph.edges.push(Edge { from: graph.nodes[0].id.clone(), port: Port::Next, to: call.id.clone(), points: vec![] });
+        graph.nodes.push(call);
+        store.save_scenario(&caller).unwrap();
+        // The list the graph could have come from is not a part of the file.
+        fs::write(store.scenario_dir(&caller.id).join("steps.backup.json"), b"{}").unwrap();
+
+        let file = store.root().join("caller.clickit");
+        export(&store, &caller.id, &file).unwrap();
+        let mut archive = ZipArchive::new(File::open(&file).unwrap()).unwrap();
+        let names: Vec<String> = archive.file_names().map(str::to_string).collect();
+        assert!(!names.iter().any(|name| name.contains("backup")));
+        let json = String::from_utf8(read_entry(&mut archive, SCENARIO_ENTRY, MAX_SCENARIO_BYTES).unwrap().unwrap());
+        let written: serde_json::Value = serde_json::from_str(&json.unwrap()).unwrap();
+        assert_eq!(written["version"], 2);
+        drop(archive);
+
+        let copy = import(&store, &file).unwrap();
+        assert_ne!(copy.id, caller.id);
+        assert_eq!(copy.version, GRAPH_VERSION);
+        let called = copy.graph.as_ref().unwrap().callees();
+        assert_eq!(called.len(), 1);
+        // The block points at the imported copy of what it runs, not at the original.
+        assert_ne!(called[0], callee.id);
+        assert_eq!(store.load_scenario(&called[0]).unwrap().name, "Callee");
+        assert!(store.template_exists(&called[0], "tpl-c.png"));
+        assert!(store.issues(&copy).is_empty());
+        assert_eq!(store.list_scenarios().len(), 4);
         let _ = fs::remove_dir_all(store.root());
     }
 }

@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useEffect, useRef } from "react";
 import type {
   AgentEntry,
+  ChatInfo,
   HarnessDialogEvent,
   CaptureResult,
   DataKind,
@@ -11,6 +12,7 @@ import type {
   RegionResult,
   RunFinished,
   RunStatus,
+  RunTrace,
   UpdateStatus,
 } from "../types/runtime";
 
@@ -18,6 +20,8 @@ export interface AppEvents {
   /** Every state or position change of a run or a recording (throttled). */
   "run:status": RunStatus;
   "run:finished": RunFinished;
+  /** Where a canvas scenario is right now and which links the pass took. */
+  "run:trace": RunTrace;
   "record:finished": RecordFinished;
   "capture:point": CaptureResult;
   "region:done": RegionResult;
@@ -31,8 +35,12 @@ export interface AppEvents {
   "harness:scenario": { id: string };
   /** ClickIt is asking whether a harness may start this scenario. */
   "harness:confirm": { requestId: number; name: string };
-  "agent:entry": AgentEntry;
-  "agent:idle": null;
+  /** A new line of a chat with the model. */
+  "agent:entry": { chatId: string; entry: AgentEntry };
+  /** The model finished its answer in this chat. */
+  "agent:idle": { chatId: string };
+  /** A chat got its title from its first message. */
+  "agent:chat": ChatInfo;
   /** A line from an external harness connection, or a change of that connection. */
   "harness:dialog": HarnessDialogEvent;
 }

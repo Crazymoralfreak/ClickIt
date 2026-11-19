@@ -17,9 +17,9 @@ use tauri::Emitter;
 use crate::app::Core;
 use crate::engine::Source;
 use crate::error::{AppError, AppResult};
-use crate::model::scenario::{Scenario, WindowTarget, SCENARIO_VERSION};
+use crate::model::scenario::{Condition, LoopMode, Scenario, Step, StepKind, WindowTarget};
 use crate::model::schedule::{RunTarget, TargetKind};
-use crate::model::validate::{has_errors, validate_scenario, Issue};
+use crate::model::validate::{has_errors, Issue};
 use crate::runtime::{JournalEntry, Rect};
 use crate::screen;
 use crate::shell::text::text;
@@ -78,22 +78,49 @@ pub fn tool_definitions() -> Vec<Value> {
     vec![
         tool(
             "list_scenarios",
-            "List saved scenarios: id, name, mode (screen or window) and step count.",
+            "List saved scenarios: id, name, mode (screen or window), format (list or canvas) and the number of steps or blocks.",
             json!({"type": "object", "properties": {}}),
         ),
         tool(
             "get_scenario",
-            "Read one scenario, including its steps and revision.",
+            "Read one scenario with its revision. format tells how it is stored: list has steps, canvas has graph with nodes, edges and notes.",
             json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
         ),
         tool(
             "create_scenario",
-            "Create an empty scenario. The core assigns the id.",
-            json!({"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}),
+            "Create an empty scenario. The core assigns the id. format is list (default) or canvas; a canvas scenario starts with one start block. Prefer canvas unless the user asks for a list.",
+            json!({
+                "type": "object",
+                "properties": {"name": {"type": "string"}, "format": {"type": "string", "enum": ["list", "canvas"]}},
+                "required": ["name"]
+            }),
         ),
         tool(
             "save_scenario",
-            "Replace a scenario. Send the object from get_scenario with your edits, including revision. Empty step ids are filled in. Errors are returned and nothing is written. Steps use type click, move, drag, scroll, key, text, pause, wait, if, loop, breakLoop or stop. Coordinates are absolute for screen mode and client for window mode. Image steps refer to a template file name from save_template.",
+            concat!(
+                "Replace a scenario. Send the object from get_scenario with your edits, including revision. ",
+                "The format cannot be changed here: use convert_scenario. Empty ids are filled in. ",
+                "Errors are returned and nothing is written; every issue names its step or block in stepId. ",
+                "List: steps use type click, move, drag, scroll, key, text, pause, wait, if, loop, breakLoop or stop. ",
+                "Canvas: graph is {nodes, edges, notes}. A node is {id, type, title, enabled, pauseAfter, repeat, x, y} plus the fields of its type. ",
+                "Types: start (exactly one, output next); click, move, drag, scroll, key, text, pause, stop with the fields of the list steps (output next); ",
+                "wait {condition, pollMs, timeoutMs, onFound} (outputs next and timeout); ",
+                "branch {condition, pollMs, timeoutMs} where timeoutMs 0 checks once (outputs yes and no); ",
+                "counter {times, pauseBetween} (outputs body and done); ",
+                "call {scenarioId} runs one pass of another scenario in the same mode (output next); ",
+                "intercept {condition, minIntervalMs >= 500} has no input (output next leads to its own branch). ",
+                "An edge is {from, port, to}. One edge per output, any number of edges into a block. ",
+                "An output without an edge ends the pass; a timeout output without an edge fails the run. ",
+                "A loop is an edge back to an earlier block. A counter sends the pass into body `times` times and then into done: link the end of the body back to the counter. ",
+                "An intercept is checked before every block and on every poll of a wait or a branch, at most once per minIntervalMs; ",
+                "when it holds, its branch runs to an output without an edge and the interrupted block starts over. ",
+                "The branch of an intercept must not lead to blocks reachable from start. At most 8 intercepts and 500 blocks. ",
+                "Leave x and y out of new nodes: they are laid out automatically; keep x and y of the nodes you did not move. ",
+                "Give blocks a short title. notes hold {id, kind, x, y, width, height, text, color} with kind note or frame; ",
+                "a frame groups the blocks inside its rectangle. Instead of a rectangle a frame may carry around: [block ids] and is drawn around them. ",
+                "Coordinates of clicks are absolute for screen mode and client for window mode. ",
+                "Image conditions refer to a template file name from save_template."
+            ),
             json!({
                 "type": "object",
                 "properties": {"scenario": {"type": "object"}},
@@ -102,8 +129,26 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "validate_scenario",
-            "Check a scenario without writing it. Returns the issues.",
+            "Check a scenario, a list or a canvas graph, without writing it. Returns the issues; stepId is the id of the step or block.",
             json!({"type": "object", "properties": {"scenario": {"type": "object"}}, "required": ["scenario"]}),
+        ),
+        tool(
+            "convert_scenario",
+            "Turn a list scenario into a canvas graph with an automatic layout. With copy false the scenario is converted in place and its list is kept as a backup the user can return to. With copy true a new scenario is created (name is optional) and the list stays. Returns the graph scenario.",
+            json!({
+                "type": "object",
+                "properties": {"id": {"type": "string"}, "copy": {"type": "boolean"}, "name": {"type": "string"}},
+                "required": ["id"]
+            }),
+        ),
+        tool(
+            "check_condition",
+            "Look at a condition once, the way a run does, without clicking anything. Pass nodeId, the id of a wait, branch or intercept block (or of a wait or if step of a list), or a condition object to try before saving. Returns holds, and for an image: found, the centre x and y, score (similarity 0..1) and, when it is not found, wouldMatchAt, the similarity at which it would be. For a pixel: the colour that is there now. The main window hides for the look.",
+            json!({
+                "type": "object",
+                "properties": {"id": {"type": "string"}, "nodeId": {"type": "string"}, "condition": {"type": "object"}},
+                "required": ["id"]
+            }),
         ),
         tool(
             "list_windows",
@@ -117,12 +162,21 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "run_status",
-            "What a run or a recording is doing right now.",
+            "What a run or a recording is doing right now. For a canvas scenario block names the current block: id, number with title, and type.",
             json!({"type": "object", "properties": {}}),
         ),
         tool(
             "run_scenario",
-            "Start a scenario by id. Does not wait until it finishes: a scenario may run until stopped. Returns outcome started or declined. Unless auto-run is enabled, ClickIt asks the user first.",
+            "Start a scenario by id. Does not wait until it finishes: a scenario may run until stopped. Returns outcome started or declined. Unless auto-run is enabled, ClickIt asks the user first. For a canvas scenario startNode makes a trial run: one pass from that block, without the repeats of the scenario.",
+            json!({
+                "type": "object",
+                "properties": {"id": {"type": "string"}, "startNode": {"type": "string"}},
+                "required": ["id"]
+            }),
+        ),
+        tool(
+            "get_trace",
+            "The trace of the last run of a canvas scenario, finished or still going: nodePasses (how many times each block was entered), edgePasses (keys are blockId:output), outcomes (the output each block was left through last), moves (the last transitions) and stop with the block, the outcome and the reason the run ended on. trace is null when the scenario has not run since ClickIt started.",
             json!({"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}),
         ),
         tool(
@@ -187,16 +241,22 @@ fn tool(name: &str, description: &str, parameters: Value) -> Value {
 pub fn call(core: &Core, method: &str, params: &Value) -> AppResult<Value> {
     match method {
         "list_scenarios" => Ok(serde_json::to_value(core.store.list_scenarios()).unwrap_or(Value::Null)),
-        "get_scenario" => {
-            let scenario = core.store.load_scenario(&required_str(params, "id")?)?;
-            Ok(serde_json::to_value(scenario)?)
+        "get_scenario" => scenario_view(&core.store.load_scenario(&required_str(params, "id")?)?),
+        "create_scenario" => {
+            let format = params.get("format").and_then(Value::as_str).unwrap_or("list");
+            create_scenario(core, &required_str(params, "name")?, format)
         }
-        "create_scenario" => create_scenario(core, &required_str(params, "name")?),
         "save_scenario" => save_scenario(core, params, true),
         "validate_scenario" => {
-            let mut scenario = scenario_from(params)?;
-            scenario.fill_empty_ids();
+            let scenario = scenario_from(params)?;
             Ok(json!({"issues": issues_of(core, &scenario)}))
+        }
+        "convert_scenario" => convert_scenario(core, params),
+        "check_condition" => check_condition(core, params),
+        "get_trace" => {
+            let id = required_str(params, "id")?;
+            core.store.load_scenario(&id)?;
+            Ok(json!({"trace": core.engine.trace(&id)}))
         }
         "list_windows" => {
             let windows: Vec<Value> = target::top_windows()
@@ -206,8 +266,11 @@ pub fn call(core: &Core, method: &str, params: &Value) -> AppResult<Value> {
             Ok(json!(windows))
         }
         "get_journal" => Ok(json!(journal_view(core, params))),
-        "run_status" => Ok(serde_json::to_value(core.hub.get())?),
-        "run_scenario" => run_scenario(core, &required_str(params, "id")?),
+        "run_status" => run_status(core),
+        "run_scenario" => {
+            let start_node = params.get("startNode").and_then(Value::as_str).map(str::trim).filter(|id| !id.is_empty());
+            run_scenario(core, &required_str(params, "id")?, start_node.map(str::to_string))
+        }
         "stop_scenario" => {
             core.stop();
             Ok(json!({"stopped": true}))
@@ -229,37 +292,169 @@ fn required_str(params: &Value, key: &str) -> AppResult<String> {
         .ok_or_else(|| AppError::new("invalid"))
 }
 
-fn scenario_from(params: &Value) -> AppResult<Scenario> {
+/// Reads the scenario a tool was given and brings it to the shape that is
+/// stored: ids filled in, new blocks laid out, frames drawn around their blocks.
+pub(crate) fn scenario_from(params: &Value) -> AppResult<Scenario> {
     let value = params.get("scenario").cloned().unwrap_or(Value::Null);
-    Ok(serde_json::from_value(value)?)
+    let around = frames_around(&value);
+    let mut scenario: Scenario = serde_json::from_value(value)?;
+    scenario.fill_empty_ids();
+    scenario.version = scenario.format_version();
+    if let Some(graph) = scenario.graph.as_mut() {
+        graph.place_missing();
+        for (index, ids) in around {
+            let Some((x, y, width, height)) = graph.frame_around(&ids) else {
+                continue;
+            };
+            if let Some(note) = graph.notes.get_mut(index) {
+                (note.x, note.y, note.width, note.height) = (x, y, width, height);
+            }
+        }
+    }
+    Ok(scenario)
+}
+
+/// Frames that name their blocks instead of a rectangle: index of the note and the ids.
+fn frames_around(scenario: &Value) -> Vec<(usize, Vec<String>)> {
+    let notes = scenario.get("graph").and_then(|graph| graph.get("notes")).and_then(Value::as_array);
+    notes
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, note)| {
+            let ids: Vec<String> =
+                note.get("around")?.as_array()?.iter().filter_map(Value::as_str).map(str::to_string).collect();
+            (!ids.is_empty()).then_some((index, ids))
+        })
+        .collect()
+}
+
+/// A scenario as the tools see it: the stored object and how it is stored.
+fn scenario_view(scenario: &Scenario) -> AppResult<Value> {
+    let mut value = serde_json::to_value(scenario)?;
+    value["format"] = json!(scenario.format());
+    Ok(value)
 }
 
 fn issues_of(core: &Core, scenario: &Scenario) -> Vec<Issue> {
-    validate_scenario(scenario, &|file| core.store.template_exists(&scenario.id, file))
+    core.store.issues(scenario)
 }
 
-fn create_scenario(core: &Core, name: &str) -> AppResult<Value> {
+fn create_scenario(core: &Core, name: &str, format: &str) -> AppResult<Value> {
     let name = name.trim();
     if name.is_empty() {
         return Err(AppError::new("nameEmpty"));
     }
-    let scenario = Scenario::new(name);
+    let scenario = match format {
+        "list" => Scenario::new(name),
+        "canvas" => {
+            let mut scenario = Scenario::new_canvas(name);
+            if let Some(graph) = scenario.graph.as_mut() {
+                graph.place_missing();
+            }
+            scenario
+        }
+        _ => return Err(AppError::new("invalid")),
+    };
     core.store.save_scenario(&scenario)?;
     core.refresh_tray();
     announce(core, &scenario.id);
-    Ok(serde_json::to_value(scenario)?)
+    scenario_view(&scenario)
+}
+
+/// Turns a list into a graph: in place, or as a new scenario when `copy` is set.
+fn convert_scenario(core: &Core, params: &Value) -> AppResult<Value> {
+    let id = required_str(params, "id")?;
+    let copy = params.get("copy").and_then(Value::as_bool).unwrap_or(false);
+    let name = if copy {
+        let given = params.get("name").and_then(Value::as_str).map(str::trim).filter(|name| !name.is_empty());
+        Some(match given {
+            Some(name) => name.to_string(),
+            None => {
+                let source = core.store.load_scenario(&id)?;
+                text(&core.lang(), "scenarios.canvasCopyName", &[("name", &source.name)])
+            }
+        })
+    } else {
+        None
+    };
+    let scenario = core.scenario_to_canvas(&id, name.as_deref())?;
+    announce(core, &scenario.id);
+    scenario_view(&scenario)
+}
+
+/// The condition of a step of a list, wherever the step is nested.
+fn step_condition(steps: &[Step], id: &str) -> Option<Condition> {
+    for step in steps {
+        if step.id == id {
+            return match &step.kind {
+                StepKind::Wait { condition, .. }
+                | StepKind::If { condition, .. }
+                | StepKind::Loop { mode: LoopMode::While { condition }, .. } => Some(condition.clone()),
+                _ => None,
+            };
+        }
+        let nested = match &step.kind {
+            StepKind::If { then_steps, else_steps, .. } => {
+                step_condition(then_steps, id).or_else(|| step_condition(else_steps, id))
+            }
+            StepKind::Loop { steps, .. } => step_condition(steps, id),
+            _ => None,
+        };
+        if nested.is_some() {
+            return nested;
+        }
+    }
+    None
+}
+
+/// "Check now" for a tool: the condition of a block or a step, or one that is not saved yet.
+fn check_condition(core: &Core, params: &Value) -> AppResult<Value> {
+    let scenario = core.store.load_scenario(&required_str(params, "id")?)?;
+    let node_id = params.get("nodeId").and_then(Value::as_str).map(str::trim).filter(|id| !id.is_empty());
+    let condition = match (node_id, params.get("condition").filter(|value| !value.is_null())) {
+        (Some(node_id), _) => match &scenario.graph {
+            Some(graph) => graph.node(node_id).and_then(|node| node.kind.condition().cloned()),
+            None => step_condition(&scenario.steps, node_id),
+        }
+        .ok_or_else(|| AppError::new("notFound"))?,
+        (None, Some(value)) => serde_json::from_value::<Condition>(value.clone())?,
+        (None, None) => return Err(AppError::new("invalid")),
+    };
+    let result = core.check_condition(&scenario.id, scenario.mode, &scenario.target, &condition)?;
+    core.journal.add("harnessCheck", &[("name", scenario.name.clone())]);
+    Ok(serde_json::to_value(result)?)
+}
+
+/// The live status; for a graph scenario it also names the block it is on.
+fn run_status(core: &Core) -> AppResult<Value> {
+    let status = core.hub.get();
+    let mut value = serde_json::to_value(&status)?;
+    let block = status.scenario_id.as_deref().zip(status.step_id.as_deref()).and_then(|(scenario_id, step_id)| {
+        let graph = core.store.load_scenario(scenario_id).ok()?.graph?;
+        let index = graph.nodes.iter().position(|node| node.id == step_id)?;
+        let node = serde_json::to_value(&graph.nodes[index]).ok()?;
+        Some(json!({"id": step_id, "label": graph.label(index), "type": node.get("type")}))
+    });
+    if let Some(block) = block {
+        value["block"] = block;
+    }
+    Ok(value)
 }
 
 /// Saves an existing scenario. When `reject_errors` is set, error issues abort the write.
 pub fn save_scenario(core: &Core, params: &Value, reject_errors: bool) -> AppResult<Value> {
     let mut scenario = scenario_from(params)?;
-    scenario.fill_empty_ids();
-    scenario.version = SCENARIO_VERSION;
     if core.scenario_in_use(&scenario.id) {
         return Err(AppError::new("busy"));
     }
     let stored = core.store.load_scenario(&scenario.id)?;
     scenario.revision = bumped_revision(scenario.revision, stored.revision)?;
+    // A list becomes a graph, and a graph a list again, only through a conversion.
+    let mixed = scenario.graph.is_some() && !scenario.steps.is_empty();
+    if mixed || stored.graph.is_some() != scenario.graph.is_some() {
+        return Err(AppError::new("formatMismatch"));
+    }
     let issues = issues_of(core, &scenario);
     if reject_errors && has_errors(&issues) {
         return Ok(json!({"saved": false, "issues": issues}));
@@ -274,7 +469,8 @@ pub fn save_scenario(core: &Core, params: &Value, reject_errors: bool) -> AppRes
         announce(core, &scenario.id);
     }
     let warnings: Vec<&Issue> = issues.iter().filter(|issue| !matches!(issue.severity, crate::model::validate::Severity::Error)).collect();
-    Ok(json!({"saved": true, "scenario": scenario, "warnings": warnings}))
+    let saved = if reject_errors { scenario_view(&scenario)? } else { serde_json::to_value(&scenario)? };
+    Ok(json!({"saved": true, "scenario": saved, "warnings": warnings}))
 }
 
 fn announce(core: &Core, id: &str) {
@@ -328,8 +524,14 @@ fn journal_line(lang: &str, entry: &JournalEntry) -> JournalView {
     JournalView { time: entry.time.clone(), code: entry.code.clone(), params: map, text }
 }
 
-fn run_scenario(core: &Core, id: &str) -> AppResult<Value> {
+fn run_scenario(core: &Core, id: &str, start_node: Option<String>) -> AppResult<Value> {
     let scenario = core.store.load_scenario(id)?;
+    if let Some(node) = &start_node {
+        // A trial run from a block exists only for a graph, and the block has to be there.
+        if scenario.graph.as_ref().and_then(|graph| graph.node(node)).is_none() {
+            return Err(AppError::new("notFound"));
+        }
+    }
     let issues = issues_of(core, &scenario);
     if has_errors(&issues) {
         return Ok(json!({"outcome": "error", "issues": issues}));
@@ -343,7 +545,8 @@ fn run_scenario(core: &Core, id: &str) -> AppResult<Value> {
     if !allowed {
         return Ok(json!({"outcome": "declined"}));
     }
-    core.start(&RunTarget { kind: TargetKind::Scenario, id: id.to_string() }, Source::Harness)?;
+    let target = RunTarget { kind: TargetKind::Scenario, id: id.to_string() };
+    core.start_from(&target, Source::Harness, start_node, None)?;
     Ok(json!({"outcome": "started"}))
 }
 
@@ -673,6 +876,121 @@ mod tests {
         assert_eq!(bumped_revision(0, 0).unwrap(), 1);
         assert_eq!(bumped_revision(4, 4).unwrap(), 5);
         assert_eq!(bumped_revision(3, 4).unwrap_err().code, "stale");
+    }
+
+    #[test]
+    fn a_saved_graph_gets_ids_a_layout_and_frames_around_the_named_blocks() {
+        let scenario = scenario_from(&json!({"scenario": {
+            "id": "sc-1",
+            "name": "Demo",
+            "graph": {
+                "nodes": [
+                    {"id": "s", "type": "start", "x": 40.0, "y": 60.0},
+                    {"id": "", "type": "pause", "duration": {"fromMs": 5, "toMs": 5}},
+                    {"id": "w", "type": "text", "text": "hi"}
+                ],
+                "edges": [{"from": "s", "port": "next", "to": "w"}],
+                "notes": [{"kind": "frame", "text": "Typing", "around": ["w"]}, {"kind": "note", "text": "Plain"}]
+            }
+        }}))
+        .unwrap();
+        assert_eq!(scenario.version, crate::model::graph::GRAPH_VERSION);
+        let graph = scenario.graph.unwrap();
+        assert!(graph.nodes.iter().all(|node| !node.id.is_empty() && node.x.is_some() && node.y.is_some()));
+        // A block that came with a place keeps it.
+        assert_eq!((graph.nodes[0].x, graph.nodes[0].y), (Some(40.0), Some(60.0)));
+        let typed = &graph.nodes[2];
+        let frame = &graph.notes[0];
+        assert!(frame.x < typed.x.unwrap() && frame.y < typed.y.unwrap());
+        assert!(frame.width > crate::model::graph::BLOCK_WIDTH && frame.height > crate::model::graph::BLOCK_HEIGHT);
+        assert!(!frame.id.is_empty());
+        assert_eq!((graph.notes[1].width, graph.notes[1].height), (0.0, 0.0));
+    }
+
+    /// The shortest graph a tool may send, the one the README shows: every field left out has a default.
+    #[test]
+    fn a_graph_with_only_the_required_fields_is_valid() {
+        let scenario = scenario_from(&json!({"scenario": {
+            "id": "sc-1",
+            "name": "Demo",
+            "graph": {
+                "nodes": [
+                    {"id": "s", "type": "start"},
+                    {
+                        "id": "w",
+                        "type": "wait",
+                        "title": "Wait for the button",
+                        "condition": {"kind": "imageFound", "template": "tpl-button.png", "area": {"kind": "screen"}, "threshold": 0.9},
+                        "pollMs": 200,
+                        "timeoutMs": 10000
+                    },
+                    {
+                        "id": "c",
+                        "type": "click",
+                        "title": "Press",
+                        "button": "left",
+                        "action": "click",
+                        "position": {"kind": "absolute", "x": 640, "y": 360}
+                    }
+                ],
+                "edges": [{"from": "s", "port": "next", "to": "w"}, {"from": "w", "port": "next", "to": "c"}],
+                "notes": []
+            }
+        }}))
+        .unwrap();
+        let issues = crate::model::validate::validate_scenario(&scenario, &|_| true);
+        let errors: Vec<&str> = issues
+            .iter()
+            .filter(|issue| issue.severity == crate::model::validate::Severity::Error)
+            .map(|issue| issue.code.as_str())
+            .collect();
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[test]
+    fn a_tool_sees_the_format_of_a_scenario() {
+        let list = scenario_view(&Scenario::new("List")).unwrap();
+        assert_eq!(list["format"], "list");
+        let canvas = scenario_view(&Scenario::new_canvas("Canvas")).unwrap();
+        assert_eq!(canvas["format"], "canvas");
+        assert_eq!(canvas["graph"]["nodes"][0]["type"], "start");
+        // What a tool reads it can send back: the extra field is ignored.
+        assert!(scenario_from(&json!({"scenario": canvas})).unwrap().graph.is_some());
+    }
+
+    #[test]
+    fn the_condition_of_a_nested_step_is_found_by_its_id() {
+        let wait = Step::new(StepKind::Wait {
+            condition: Condition::Process { name: "game.exe".into() },
+            poll_ms: 200,
+            timeout_ms: 0,
+            on_timeout: crate::model::scenario::OnTimeout::Stop,
+            on_found: crate::model::scenario::OnFound::None,
+        });
+        let wait_id = wait.id.clone();
+        let outer = Step::new(StepKind::Loop {
+            mode: LoopMode::Forever,
+            pause_between: Default::default(),
+            steps: vec![wait],
+        });
+        let outer_id = outer.id.clone();
+        let steps = [outer];
+        assert_eq!(step_condition(&steps, &wait_id), Some(Condition::Process { name: "game.exe".into() }));
+        assert_eq!(step_condition(&steps, &outer_id), None);
+        assert_eq!(step_condition(&steps, "nope"), None);
+    }
+
+    #[test]
+    fn every_tool_has_a_name_a_description_and_an_object_schema() {
+        let tools = tool_definitions();
+        let names: Vec<&str> = tools.iter().filter_map(|tool| tool["name"].as_str()).collect();
+        for expected in ["get_scenario", "save_scenario", "convert_scenario", "check_condition", "get_trace", "run_scenario"] {
+            assert!(names.contains(&expected), "missing {expected}");
+        }
+        for tool in &tools {
+            assert!(!tool["description"].as_str().unwrap_or("").is_empty());
+            assert_eq!(tool["parameters"]["type"], "object");
+        }
     }
 
     #[test]

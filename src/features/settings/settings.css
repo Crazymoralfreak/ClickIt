@@ -95,3 +95,44 @@
   cursor: text;
   word-break: break-all;
 }
+
+.settings-cleanup {
+  margin-top: 10px;
+}
+
+.settings-cleanup-title {
+  font-weight: 600;
+}
+
+.settings-cleanup-list {
+  margin-top: 8px;
+}
+
+.settings-cleanup-row {
+  align-items: flex-start;
+  padding: 8px 10px;
+}
+
+.settings-cleanup-about {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-cleanup-name {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.settings-cleanup-size {
+  color: var(--text-dim);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-hotkey-group {
+  margin: 10px 0 2px;
+  font-weight: 600;
+  color: var(--text);
+}

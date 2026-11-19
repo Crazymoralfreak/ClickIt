@@ -15,7 +15,7 @@ use crate::model::scenario::Modifiers;
 pub struct Hotkey {
     pub shortcut: Shortcut,
     pub modifiers: Modifiers,
-    /// Virtual key, for the recorder to leave the stop hotkey out of the steps.
+    /// Virtual key, for the recorder to leave the hotkeys of ClickIt out of the steps.
     pub vk: u16,
 }
 
@@ -30,6 +30,15 @@ pub fn parse(text: &str) -> AppResult<Hotkey> {
     flags.set(ShortcutModifiers::SHIFT, modifiers.shift);
     flags.set(ShortcutModifiers::SUPER, modifiers.win);
     Ok(Hotkey { shortcut: Shortcut::new(Some(flags), code), modifiers, vk })
+}
+
+/// A hotkey that may be left unassigned: an empty text is `None`.
+pub fn parse_optional(text: &str) -> AppResult<Option<Hotkey>> {
+    if text.is_empty() {
+        Ok(None)
+    } else {
+        parse(text).map(Some)
+    }
 }
 
 /// Registers the hotkey with Windows. `text` is what the user typed, for the message.
