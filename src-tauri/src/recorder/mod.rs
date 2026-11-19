@@ -6,6 +6,11 @@
 //! "Window" mode only what happens in the target window counts, the recording
 //! ends by the Stop button, the hotkey, the screen corner, after 10 minutes or
 //! at 500 steps. The steps are appended to the end of the scenario.
+//!
+//! A recording can be held: nothing is recorded and its clock stands still,
+//! so the time of a hold does not become a pause between two steps. The user
+//! holds it with a hotkey; the core holds it while an image is being selected
+//! and then hands over the step that waits for that image.
 
 pub mod normalize;
 
@@ -31,7 +36,9 @@ use crate::engine::timing::cursor_in_corner;
 use crate::error::{AppError, AppResult};
 use crate::input::keys::{modifier_of, ModifierKey};
 use crate::journal::Journal;
-use crate::model::scenario::{Modifiers, MouseButton, Position, Scenario, ScenarioMode, WindowTarget, MAX_STEPS};
+use crate::model::scenario::{
+    Modifiers, MouseButton, Position, Scenario, ScenarioMode, Step, WindowTarget, MAX_STEPS,
+};
 use crate::runtime::{RecordFinished, RecordStopReason, RecordingProgress, Rect, RunState, RunStatus, StatusHub};
 use crate::storage::Store;
 use crate::target::{self, Hwnd};
@@ -248,8 +255,9 @@ fn hook_thread(sender: Sender<(u64, Hooked)>, started: Instant, ready: Sender<Op
 
 pub struct RecordOptions {
     pub corner_stop: bool,
-    /// The hotkey that stops the recording: its press is not recorded.
-    pub stop_hotkey: Option<(Modifiers, u16)>,
+    /// The hotkeys ClickIt holds during the recording (stop, pause, the image
+    /// ones): their presses are not recorded.
+    pub own_hotkeys: Vec<(Modifiers, u16)>,
 }
 
 type FinishedSink = Box<dyn Fn(&RecordFinished) + Send + Sync>;
@@ -262,6 +270,12 @@ pub struct Recorder {
     stop: Mutex<Option<RecordStopReason>>,
     scenario_id: Mutex<Option<String>>,
     thread: Mutex<Option<JoinHandle<()>>>,
+    /// The user paused the recording with the hotkey.
+    paused_by_user: AtomicBool,
+    /// The core is busy with the recording itself: an image is being selected.
+    busy: AtomicBool,
+    /// Steps made by the core, waiting for the worker to put them in.
+    handed: Mutex<Vec<Step>>,
     on_finished: FinishedSink,
 }
 
@@ -280,6 +294,44 @@ struct Session {
     existing: usize,
     options: RecordOptions,
     normalizer: Normalizer,
+    hold: Hold,
+}
+
+/// The holds of a recording. All times are milliseconds since its start.
+#[derive(Debug, Default)]
+struct Hold {
+    /// When the current hold began.
+    since: Option<u64>,
+    /// How long the recording was held before, in total.
+    total: u64,
+}
+
+impl Hold {
+    fn is_on(&self) -> bool {
+        self.since.is_some()
+    }
+
+    /// The time of the recording without its holds: this is what the pauses
+    /// between steps are made of. It stands still while a hold is on.
+    fn clock(&self, at: u64) -> u64 {
+        self.since.map_or(at, |since| at.min(since)).saturating_sub(self.total)
+    }
+
+    /// Turns the hold on or off. Returns whether it has just begun.
+    fn set(&mut self, on: bool, now: u64) -> bool {
+        match (on, self.since) {
+            (true, None) => {
+                self.since = Some(now);
+                true
+            }
+            (false, Some(since)) => {
+                self.total += now.saturating_sub(since);
+                self.since = None;
+                false
+            }
+            _ => false,
+        }
+    }
 }
 
 impl Session {
@@ -320,7 +372,16 @@ impl Session {
     }
 
     fn handle(&mut self, at: u64, event: Hooked) {
+        let held = self.hold.is_on();
+        let at = self.hold.clock(at);
         match event {
+            // Releases always go through: a modifier pressed in the target window
+            // may be let go after another window became active, or during a hold.
+            Hooked::KeyUp { vk, extended } => self.normalizer.push(at, RawEvent::KeyUp { vk, extended }),
+            Hooked::KeyDown { vk, modifiers, .. } if self.options.own_hotkeys.contains(&(modifiers, vk)) => {
+                self.normalizer.forget_combination();
+            }
+            _ if held => {}
             Hooked::MouseDown { button, x, y } => {
                 if let Some(position) = self.position(x, y) {
                     self.normalizer.push(at, RawEvent::MouseDown { button, position });
@@ -336,15 +397,10 @@ impl Session {
                 }
             }
             Hooked::KeyDown { vk, extended, ch, modifiers } => {
-                if self.options.stop_hotkey == Some((modifiers, vk)) {
-                    self.normalizer.forget_combination();
-                } else if !self.paused() {
+                if !self.paused() {
                     self.normalizer.push(at, RawEvent::KeyDown { vk, extended, ch, modifiers });
                 }
             }
-            // Releases always go through: a modifier pressed in the target window
-            // may be let go after another window became active.
-            Hooked::KeyUp { vk, extended } => self.normalizer.push(at, RawEvent::KeyUp { vk, extended }),
         }
     }
 }
@@ -359,6 +415,9 @@ impl Recorder {
             stop: Mutex::new(None),
             scenario_id: Mutex::new(None),
             thread: Mutex::new(None),
+            paused_by_user: AtomicBool::new(false),
+            busy: AtomicBool::new(false),
+            handed: Mutex::new(Vec::new()),
             on_finished,
         })
     }
@@ -423,6 +482,9 @@ impl Recorder {
 
         *lock(&self.stop) = None;
         *lock(&self.scenario_id) = Some(scenario.id.clone());
+        self.paused_by_user.store(false, Ordering::SeqCst);
+        self.busy.store(false, Ordering::SeqCst);
+        lock(&self.handed).clear();
         let session = Session {
             scenario_id: scenario.id.clone(),
             name: scenario.name.clone(),
@@ -432,6 +494,7 @@ impl Recorder {
             existing,
             options,
             normalizer: Normalizer::new(),
+            hold: Hold::default(),
         };
         self.journal.add("recordStart", &[("name", scenario.name.clone())]);
         let recorder = Arc::clone(self);
@@ -465,6 +528,43 @@ impl Recorder {
         }
     }
 
+    /// The pause hotkey: holds the recording, or lets it go on.
+    pub fn toggle_pause(&self) {
+        if self.is_active() {
+            self.paused_by_user.fetch_xor(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Holds the recording while the core does something for it on the screen.
+    pub fn set_busy(&self, busy: bool) {
+        self.busy.store(busy, Ordering::SeqCst);
+    }
+
+    /// Hands over a step made outside: it goes after what is recorded so far.
+    pub fn add_step(&self, step: Step) {
+        if self.is_active() {
+            lock(&self.handed).push(step);
+        }
+    }
+
+    /// Takes the handed steps and the state of the hold into the session.
+    fn sync(&self, session: &mut Session, now: u64) {
+        // The hold is read first: a step is handed over before its hold is lifted,
+        // so it is seen here no later than the end of the hold and gets the time
+        // the hold began at.
+        let held = self.paused_by_user.load(Ordering::SeqCst) || self.busy.load(Ordering::SeqCst);
+        let handed = std::mem::take(&mut *lock(&self.handed));
+        for step in handed {
+            if session.normalizer.len() < session.room() {
+                session.normalizer.insert(step, session.hold.clock(now));
+            }
+        }
+        if session.hold.set(held, now) {
+            // A button that is down will be released where nothing is recorded.
+            session.normalizer.cancel_press();
+        }
+    }
+
     /// Waits for the recording to be saved. Used on exit, after `stop`.
     pub fn join(&self) {
         let handle = lock(&self.thread).take();
@@ -474,6 +574,7 @@ impl Recorder {
     }
 
     fn publish(&self, session: &Session, paused: bool) {
+        let held = session.hold.is_on();
         self.hub.set(&RunStatus {
             state: RunState::Recording,
             scenario_id: Some(session.scenario_id.clone()),
@@ -481,18 +582,23 @@ impl Recorder {
             recording: Some(RecordingProgress {
                 scenario_id: session.scenario_id.clone(),
                 steps: session.normalizer.len().min(session.room()),
-                paused,
+                // A hold says more than the wait for the window does.
+                paused: paused && !held,
+                held,
             }),
             ..RunStatus::default()
         });
     }
 
     fn work(&self, mut session: Session, events: Receiver<(u64, Hooked)>, started: Instant) {
+        let now = || started.elapsed().as_millis() as u64;
         let reason = loop {
             if let Some(reason) = *lock(&self.stop) {
                 break reason;
             }
-            if started.elapsed() >= MAX_DURATION {
+            self.sync(&mut session, now());
+            // The time of a hold does not count towards the limit.
+            if session.hold.clock(now()) >= MAX_DURATION.as_millis() as u64 {
                 break RecordStopReason::TimeLimit;
             }
             if session.normalizer.len() >= session.room() {
@@ -505,10 +611,14 @@ impl Recorder {
             self.publish(&session, paused);
             match events.recv_timeout(TICK) {
                 Ok((at, event)) => {
+                    self.sync(&mut session, now());
                     session.handle(at, event);
                     while session.normalizer.len() < session.room() {
                         match events.try_recv() {
-                            Ok((at, event)) => session.handle(at, event),
+                            Ok((at, event)) => {
+                                self.sync(&mut session, now());
+                                session.handle(at, event);
+                            }
                             Err(_) => break,
                         }
                     }
@@ -530,7 +640,11 @@ impl Recorder {
         if added > 0 {
             // The file is read again: this is the only writer while a recording is on.
             let saved = self.store.load_scenario(&session.scenario_id).and_then(|mut scenario| {
-                scenario.steps.extend(steps);
+                match scenario.graph.as_mut() {
+                    // A chain below the blocks; it joins the start only in an empty graph.
+                    Some(graph) => graph.append_chain(&steps),
+                    None => scenario.steps.extend(steps),
+                }
                 self.store.save_scenario(&scenario)
             });
             if let Err(error) = saved {
@@ -547,5 +661,34 @@ impl Recorder {
         *lock(&self.scenario_id) = None;
         self.active.store(false, Ordering::SeqCst);
         (self.on_finished)(&RecordFinished { scenario_id: session.scenario_id, added, reason });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Hold;
+
+    #[test]
+    fn the_clock_of_a_recording_stands_still_during_a_hold() {
+        let mut hold = Hold::default();
+        assert_eq!(hold.clock(700), 700);
+
+        assert!(hold.set(true, 1_000));
+        // Asking again changes nothing: the hold began once.
+        assert!(!hold.set(true, 1_500));
+        assert!(hold.is_on());
+        assert_eq!(hold.clock(900), 900);
+        assert_eq!(hold.clock(1_000), 1_000);
+        assert_eq!(hold.clock(4_000), 1_000);
+
+        assert!(!hold.set(false, 6_000));
+        assert!(!hold.is_on());
+        // Five seconds of the hold are gone: 6.3 s of the recording is 1.3 s of its steps.
+        assert_eq!(hold.clock(6_300), 1_300);
+
+        assert!(hold.set(true, 7_000));
+        assert_eq!(hold.clock(9_000), 2_000);
+        hold.set(false, 10_000);
+        assert_eq!(hold.clock(10_000), 2_000);
     }
 }

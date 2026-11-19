@@ -52,7 +52,12 @@ function TimingFields({ pollMs, timeoutMs, timeoutHint, disabled, onPoll, onTime
 
 type FoundChoice = "none" | "center" | "offset";
 
-export function WaitForm({ step, onChange, disabled, env }: StepFormProps<WaitStep>) {
+interface WaitFormProps extends StepFormProps<WaitStep> {
+  /** A wait block of a graph: where a timeout leads is drawn as a link. */
+  hideOnTimeout?: boolean;
+}
+
+export function WaitForm({ step, onChange, disabled, env, hideOnTimeout }: WaitFormProps) {
   const translator = useT();
   const { t } = translator;
   const found = step.onFound;
@@ -158,19 +163,26 @@ export function WaitForm({ step, onChange, disabled, env }: StepFormProps<WaitSt
         onPoll={(pollMs) => onChange({ ...step, pollMs })}
         onTimeout={(timeoutMs) => onChange({ ...step, timeoutMs })}
       />
-      <Field label={t("steps.fields.onTimeout")}>
-        <Select
-          value={step.onTimeout}
-          options={timeoutOptions}
-          disabled={disabled || step.timeoutMs === 0}
-          onChange={(onTimeout) => onChange({ ...step, onTimeout })}
-        />
-      </Field>
+      {hideOnTimeout ? null : (
+        <Field label={t("steps.fields.onTimeout")}>
+          <Select
+            value={step.onTimeout}
+            options={timeoutOptions}
+            disabled={disabled || step.timeoutMs === 0}
+            onChange={(onTimeout) => onChange({ ...step, onTimeout })}
+          />
+        </Field>
+      )}
     </>
   );
 }
 
-export function IfForm({ step, onChange, disabled, env }: StepFormProps<IfStep>) {
+interface IfFormProps extends StepFormProps<IfStep> {
+  /** Replaces the hint under the timeout: a branch block names its outputs there. */
+  timeoutHint?: string;
+}
+
+export function IfForm({ step, onChange, disabled, env, timeoutHint }: IfFormProps) {
   const { t } = useT();
   return (
     <>
@@ -185,7 +197,7 @@ export function IfForm({ step, onChange, disabled, env }: StepFormProps<IfStep>)
       <TimingFields
         pollMs={step.pollMs}
         timeoutMs={step.timeoutMs}
-        timeoutHint={t("steps.fields.ifTimeoutHint")}
+        timeoutHint={timeoutHint ?? t("steps.fields.ifTimeoutHint")}
         disabled={disabled}
         onPoll={(pollMs) => onChange({ ...step, pollMs })}
         onTimeout={(timeoutMs) => onChange({ ...step, timeoutMs })}

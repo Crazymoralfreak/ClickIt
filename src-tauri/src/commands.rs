@@ -9,20 +9,22 @@ use tauri::State;
 
 use serde_json::json;
 
-use crate::agent::{self, AgentEntry};
+use crate::agent::{self, AgentEntry, ChatInfo};
 use crate::external::{Dialog, McpSnippet};
-use crate::app::Core;
+use crate::app::{CleanupInfo, Core};
 use crate::harness;
-use crate::engine::Source;
+use crate::engine::conditions::CheckResult;
+use crate::engine::{Debug, Resume, Source};
 use crate::error::{AppError, AppResult};
 use crate::model::queue::{Queue, QUEUE_VERSION};
-use crate::model::scenario::{new_id, Scenario, WindowTarget};
+use crate::model::graph::{Edge, Node};
+use crate::model::scenario::{new_id, Condition, Scenario, ScenarioMode, WindowTarget};
 use crate::model::schedule::{RunTarget, ScheduleRule};
 use crate::model::settings::Settings;
-use crate::model::validate::{validate_queue, validate_scenario, Issue};
-use crate::runtime::{AppInfo, JournalEntry, RegionPurpose, RunStatus, UpdateStatus, WindowInfo};
+use crate::model::validate::{validate_queue, Issue};
+use crate::runtime::{AppInfo, JournalEntry, RegionPurpose, RunStatus, RunTrace, UpdateStatus, WindowInfo};
 use crate::screen;
-use crate::storage::{QueueSummary, ScenarioSummary};
+use crate::storage::{CleanupKind, QueueSummary, ScenarioSummary, Snippet};
 use crate::target;
 use crate::update;
 
@@ -108,14 +110,36 @@ pub fn agent_key_set(core: CoreState<'_>, key: String) -> AppResult<()> {
     core.store.set_agent_key(&key)
 }
 
+/// Chats with the model, oldest first. There is always at least one.
 #[tauri::command(async)]
-pub fn agent_history(core: CoreState<'_>) -> Vec<AgentEntry> {
-    agent::history(core.inner())
+pub fn agent_chats(core: CoreState<'_>) -> Vec<ChatInfo> {
+    agent::chats(core.inner())
 }
 
 #[tauri::command(async)]
-pub fn agent_send(core: CoreState<'_>, text: String) -> AppResult<()> {
-    agent::send(core.inner(), text)
+pub fn agent_chat_create(core: CoreState<'_>) -> ChatInfo {
+    agent::chat_create(core.inner())
+}
+
+/// Returns the chats that are left. The chat the model is answering in is refused.
+#[tauri::command(async)]
+pub fn agent_chat_delete(core: CoreState<'_>, id: String) -> AppResult<Vec<ChatInfo>> {
+    agent::chat_delete(core.inner(), &id)
+}
+
+#[tauri::command(async)]
+pub fn agent_chat_rename(core: CoreState<'_>, id: String, title: String) -> AppResult<ChatInfo> {
+    agent::chat_rename(core.inner(), &id, &title)
+}
+
+#[tauri::command(async)]
+pub fn agent_history(core: CoreState<'_>, chat_id: String) -> Vec<AgentEntry> {
+    agent::history(core.inner(), &chat_id)
+}
+
+#[tauri::command(async)]
+pub fn agent_send(core: CoreState<'_>, chat_id: String, text: String) -> AppResult<()> {
+    agent::send(core.inner(), chat_id, text)
 }
 
 #[tauri::command(async)]
@@ -147,12 +171,108 @@ pub fn scenario_get(core: CoreState<'_>, id: String) -> AppResult<Scenario> {
     core.store.load_scenario(&id)
 }
 
+/// `format` is `"list"` or `"canvas"`; a canvas scenario starts with its start block.
 #[tauri::command(async)]
-pub fn scenario_create(core: CoreState<'_>, name: String) -> AppResult<Scenario> {
-    let scenario = Scenario::new(checked_name(&name)?);
+pub fn scenario_create(core: CoreState<'_>, name: String, format: Option<String>) -> AppResult<Scenario> {
+    let name = checked_name(&name)?;
+    let scenario = match format.as_deref() {
+        Some("canvas") => Scenario::new_canvas(name),
+        Some("list") | None => Scenario::new(name),
+        Some(_) => return Err(AppError::new("invalid")),
+    };
     core.store.save_scenario(&scenario)?;
     core.refresh_tray();
     Ok(scenario)
+}
+
+/// What the editor and the list of scenarios show besides the scenario itself.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScenarioMeta {
+    /// The list this graph was made from is still there, so it can be returned.
+    pub has_backup: bool,
+    /// Scenarios whose "Run scenario" blocks run this one.
+    pub callers: Vec<ScenarioSummary>,
+}
+
+#[tauri::command(async)]
+pub fn scenario_meta(core: CoreState<'_>, id: String) -> ScenarioMeta {
+    ScenarioMeta { has_backup: core.store.has_backup(&id), callers: core.store.callers(&id) }
+}
+
+/// Turns a list into a graph. With `copy_name` the list stays and a new scenario gets the graph.
+#[tauri::command(async)]
+pub fn scenario_to_canvas(core: CoreState<'_>, id: String, copy_name: Option<String>) -> AppResult<Scenario> {
+    let copy_name = copy_name.as_deref().map(checked_name).transpose()?;
+    core.scenario_to_canvas(&id, copy_name)
+}
+
+/// Brings back the list a graph was made from; what was changed on the canvas is lost.
+#[tauri::command(async)]
+pub fn scenario_to_list(core: CoreState<'_>, id: String) -> AppResult<Scenario> {
+    core.scenario_to_list(&id)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Extracted {
+    /// The scenario the blocks were taken from, with a "Run scenario" block in their place.
+    pub scenario: Scenario,
+    pub created: Scenario,
+}
+
+/// Moves blocks of a saved graph into a new scenario.
+#[tauri::command(async)]
+pub fn scenario_extract(
+    core: CoreState<'_>,
+    id: String,
+    node_ids: Vec<String>,
+    name: String,
+) -> AppResult<Extracted> {
+    let (scenario, created) = core.scenario_extract(&id, &node_ids, checked_name(&name)?)?;
+    Ok(Extracted { scenario, created })
+}
+
+/// "Check now": one look at a condition of a scenario, saved or not. Nothing is clicked.
+#[tauri::command(async)]
+pub fn condition_check(
+    core: CoreState<'_>,
+    scenario_id: String,
+    mode: ScenarioMode,
+    target: WindowTarget,
+    condition: Condition,
+) -> AppResult<CheckResult> {
+    core.check_condition(&scenario_id, mode, &target, &condition)
+}
+
+// Snippets
+
+#[tauri::command(async)]
+pub fn snippet_list(core: CoreState<'_>) -> Vec<Snippet> {
+    core.store.list_snippets()
+}
+
+/// Saves blocks with their links and the template images of `scenario_id` they refer to.
+#[tauri::command(async)]
+pub fn snippet_save(
+    core: CoreState<'_>,
+    scenario_id: String,
+    name: String,
+    nodes: Vec<Node>,
+    edges: Vec<Edge>,
+) -> AppResult<Snippet> {
+    core.store.save_snippet(&scenario_id, checked_name(&name)?, nodes, edges)
+}
+
+/// Copies the template images of a snippet into the scenario and returns its blocks.
+#[tauri::command(async)]
+pub fn snippet_use(core: CoreState<'_>, id: String, scenario_id: String) -> AppResult<Snippet> {
+    core.store.use_snippet(&id, &scenario_id)
+}
+
+#[tauri::command(async)]
+pub fn snippet_delete(core: CoreState<'_>, id: String) -> AppResult<()> {
+    core.store.delete_snippet(&id)
 }
 
 #[tauri::command(async)]
@@ -181,7 +301,7 @@ pub fn scenario_delete(core: CoreState<'_>, id: String) -> AppResult<()> {
 
 #[tauri::command(async)]
 pub fn scenario_validate(core: CoreState<'_>, scenario: Scenario) -> Vec<Issue> {
-    validate_scenario(&scenario, &|file| core.store.template_exists(&scenario.id, file))
+    core.store.issues(&scenario)
 }
 
 #[tauri::command(async)]
@@ -275,9 +395,52 @@ pub fn schedule_set(core: CoreState<'_>, rules: Vec<ScheduleRule>) -> AppResult<
 
 // Run and recording
 
+/// Breakpoints of the open editor. They are not stored anywhere else.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugRequest {
+    #[serde(default)]
+    pub breakpoints: Vec<String>,
+    /// Stop on every block, starting with the first one.
+    #[serde(default)]
+    pub step: bool,
+}
+
+/// `start_node` makes a trial run of a graph: one pass from that block.
 #[tauri::command(async)]
-pub fn run_start(core: CoreState<'_>, target: RunTarget) -> AppResult<()> {
-    core.start(&target, Source::Manual)
+pub fn run_start(
+    core: CoreState<'_>,
+    target: RunTarget,
+    start_node: Option<String>,
+    debug: Option<DebugRequest>,
+) -> AppResult<()> {
+    let debug = debug.map(|debug| Debug { breakpoints: debug.breakpoints.into_iter().collect(), step: debug.step });
+    core.start_from(&target, Source::Manual, start_node, debug)
+}
+
+/// Runs the block a run is paused on and stops on the next one.
+#[tauri::command(async)]
+pub fn run_step(core: CoreState<'_>) {
+    core.resume(Resume::Step);
+}
+
+/// Lets a paused run go on until the next breakpoint.
+#[tauri::command(async)]
+pub fn run_continue(core: CoreState<'_>) {
+    core.resume(Resume::Continue);
+}
+
+/// The trace of the last run of a graph scenario, finished or still going.
+#[tauri::command(async)]
+pub fn run_trace(core: CoreState<'_>, id: String) -> Option<RunTrace> {
+    core.engine.trace(&id)
+}
+
+#[tauri::command(async)]
+pub fn run_trace_clear(core: CoreState<'_>, id: String) {
+    if !core.scenario_in_use(&id) {
+        core.engine.clear_trace(&id);
+    }
 }
 
 #[tauri::command(async)]
@@ -335,6 +498,20 @@ pub fn region_finish(core: CoreState<'_>) {
 #[tauri::command(async)]
 pub fn region_cancel(core: CoreState<'_>) {
     core.region_cancel();
+}
+
+// Cleanup
+
+/// What every "Clear" button of the settings would remove right now.
+#[tauri::command(async)]
+pub fn cleanup_info(core: CoreState<'_>) -> Vec<CleanupInfo> {
+    core.cleanup_info()
+}
+
+/// Removes one kind of data and returns the sizes that are left.
+#[tauri::command(async)]
+pub fn cleanup_run(core: CoreState<'_>, kind: CleanupKind) -> AppResult<Vec<CleanupInfo>> {
+    core.cleanup_run(kind)
 }
 
 // Journal and windows

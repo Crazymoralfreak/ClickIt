@@ -21,13 +21,13 @@ use windows::Win32::Globalization::GetUserDefaultUILanguage;
 
 use crate::agent::Session;
 use crate::external::Log;
-use crate::engine::conditions::capture_point;
+use crate::engine::conditions::{capture_point, check_now, needs_screen, CheckResult};
 use crate::harness::{self, ConfirmWait};
-use crate::engine::{build_plan, Engine, RunOptions, Source};
+use crate::engine::{build_plan, Debug, Engine, Resume, RunOptions, Source};
 use crate::error::{AppError, AppResult};
 use crate::input;
 use crate::journal::Journal;
-use crate::model::scenario::{new_id, Scenario, ScenarioMode, WindowTarget};
+use crate::model::scenario::{new_id, Area, Condition, Scenario, ScenarioMode, Step, StepKind, WindowTarget};
 use crate::model::schedule::{RunTarget, TargetKind};
 use crate::model::settings::{Settings, MAX_COUNTDOWN_SEC};
 use crate::recorder::{RecordOptions, Recorder};
@@ -41,7 +41,7 @@ use crate::shell::hotkeys::{self, Hotkey};
 use crate::shell::text::{error_text, status_text, text};
 use crate::shell::tray::{self, Activity, TrayModel};
 use crate::shell::{notify, window};
-use crate::storage::Store;
+use crate::storage::{remove_files, CleanupKind, Store, Usage};
 use crate::target;
 use crate::transfer;
 use crate::update::{self, Tracker};
@@ -65,6 +65,27 @@ struct RegionSession {
     target: Option<WindowTarget>,
     /// Where the mouse button went down.
     first: Option<(i32, i32)>,
+    /// Set by a recording hotkey: the cut becomes a wait step, with a click or without.
+    record_click: Option<bool>,
+}
+
+/// Hotkeys held only while a recording is going.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RecordKey {
+    Pause,
+    WaitImage,
+    ClickImage,
+}
+
+/// One row of "Settings → Data": what a "Clear" button would remove.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CleanupInfo {
+    pub kind: CleanupKind,
+    pub bytes: u64,
+    pub files: usize,
+    /// Code of the reason the button cannot be used right now.
+    pub blocked: Option<String>,
 }
 
 /// Payload of the `data:changed` event.
@@ -92,6 +113,10 @@ pub struct Core {
     settings: Mutex<Settings>,
     /// The start/stop hotkey as registered with Windows.
     start_stop: Mutex<Option<Hotkey>>,
+    /// The "step" and "continue" hotkeys, held while a run with breakpoints is going.
+    debug_keys: Mutex<Vec<(Hotkey, Resume)>>,
+    /// Pause and image-cut hotkeys, held while a recording is going.
+    record_keys: Mutex<Vec<(Hotkey, RecordKey)>>,
     capture: Mutex<Option<CaptureSession>>,
     region: Mutex<Option<RegionSession>>,
     /// Starts go one at a time, so that two of them cannot both see "idle".
@@ -143,7 +168,8 @@ fn hud_while_hidden(state: RunState) -> bool {
         | RunState::Running
         | RunState::Waiting
         | RunState::PausedWindow
-        | RunState::PausedProcess => true,
+        | RunState::PausedProcess
+        | RunState::PausedBreak => true,
         RunState::Idle | RunState::Recording => false,
     }
 }
@@ -156,7 +182,8 @@ fn activity_of(status: &RunStatus) -> Activity {
         | RunState::Running
         | RunState::Waiting
         | RunState::PausedWindow
-        | RunState::PausedProcess => Activity::Running,
+        | RunState::PausedProcess
+        | RunState::PausedBreak => Activity::Running,
     }
 }
 
@@ -256,6 +283,11 @@ impl Core {
                 let _ = app.emit("run:finished", finished);
                 with_core(&app, |core| core.run_finished(finished));
             })
+        }, {
+            let app = app.clone();
+            Box::new(move |trace| {
+                let _ = app.emit("run:trace", trace);
+            })
         });
         let recorder = Recorder::new(Arc::clone(&store), Arc::clone(&journal), Arc::clone(&hub), {
             let app = app.clone();
@@ -284,6 +316,8 @@ impl Core {
             updates: Tracker::new(),
             settings: Mutex::new(settings),
             start_stop: Mutex::new(None),
+            debug_keys: Mutex::new(Vec::new()),
+            record_keys: Mutex::new(Vec::new()),
             capture: Mutex::new(None),
             region: Mutex::new(None),
             start_lock: Mutex::new(()),
@@ -334,12 +368,24 @@ impl Core {
         new.blocked_processes = clean_processes(&new.blocked_processes);
         new.hotkey_start_stop = new.hotkey_start_stop.trim().to_string();
         new.hotkey_capture = new.hotkey_capture.trim().to_string();
+        new.hotkey_step = new.hotkey_step.trim().to_string();
+        new.hotkey_continue = new.hotkey_continue.trim().to_string();
+        new.hotkey_record_pause = new.hotkey_record_pause.trim().to_string();
+        new.hotkey_record_wait_image = new.hotkey_record_wait_image.trim().to_string();
+        new.hotkey_record_click_image = new.hotkey_record_click_image.trim().to_string();
         new.agent_endpoint = new.agent_endpoint.trim().to_string();
         new.agent_model = new.agent_model.trim().to_string();
 
         let start_stop = hotkeys::parse(&new.hotkey_start_stop)?;
         let capture = hotkeys::parse(&new.hotkey_capture)?;
-        if start_stop.shortcut == capture.shortcut {
+        let step = hotkeys::parse(&new.hotkey_step)?;
+        let resume = hotkeys::parse(&new.hotkey_continue)?;
+        let record_pause = hotkeys::parse_optional(&new.hotkey_record_pause)?;
+        let record_wait = hotkeys::parse_optional(&new.hotkey_record_wait_image)?;
+        let record_click = hotkeys::parse_optional(&new.hotkey_record_click_image)?;
+        let mut all = vec![start_stop.shortcut, capture.shortcut, step.shortcut, resume.shortcut];
+        all.extend([record_pause, record_wait, record_click].into_iter().flatten().map(|hotkey| hotkey.shortcut));
+        if all.iter().enumerate().any(|(at, shortcut)| all[..at].contains(shortcut)) {
             return Err(AppError::new("hotkeySame"));
         }
         let registered = *lock(&self.start_stop);
@@ -545,7 +591,23 @@ impl Core {
     /// Starts a scenario or a queue. A start that did not happen is written to
     /// the journal; the scheduler writes its own entry.
     pub fn start(&self, run_target: &RunTarget, source: Source) -> AppResult<()> {
-        let started = self.try_start(run_target, source);
+        self.start_from(run_target, source, None, None)
+    }
+
+    /// A start with what only the editor and the tools ask for: a trial run
+    /// of a graph from one of its blocks, and breakpoints.
+    pub fn start_from(
+        &self,
+        run_target: &RunTarget,
+        source: Source,
+        start_node: Option<String>,
+        debug: Option<Debug>,
+    ) -> AppResult<()> {
+        let with_debug = debug.is_some();
+        let started = self.try_start(run_target, source, start_node, debug);
+        if started.is_ok() && with_debug {
+            self.bind_debug_keys();
+        }
         if let Err(error) = &started {
             if source != Source::Schedule {
                 let name = self.target_name(run_target).unwrap_or_else(|| run_target.id.clone());
@@ -555,10 +617,28 @@ impl Core {
         started
     }
 
-    fn try_start(&self, run_target: &RunTarget, source: Source) -> AppResult<()> {
+    fn try_start(
+        &self,
+        run_target: &RunTarget,
+        source: Source,
+        start_node: Option<String>,
+        debug: Option<Debug>,
+    ) -> AppResult<()> {
         let _starting = lock(&self.start_lock);
         self.ensure_idle()?;
         let plan = build_plan(&self.store, run_target)?;
+        if start_node.is_some() || debug.is_some() {
+            // A start from a block and breakpoints belong to a single graph scenario.
+            let graph = plan.queue.is_none().then(|| plan.items.first()).flatten().and_then(|item| item.scenario.graph.as_ref());
+            let known = match (&start_node, graph) {
+                (Some(id), Some(graph)) => graph.node(id).is_some(),
+                (None, Some(_)) => true,
+                (_, None) => false,
+            };
+            if !known {
+                return Err(AppError::new("notFound"));
+            }
+        }
         let settings = self.settings();
         if let Some(process) = target::first_running(&settings.blocked_processes) {
             return Err(AppError::new("blockedProcess").with("process", process));
@@ -574,13 +654,48 @@ impl Core {
                 }
             }
         }
-        let options = RunOptions {
-            source,
-            countdown_sec: settings.countdown_sec.min(MAX_COUNTDOWN_SEC),
-            corner_stop: settings.corner_stop,
-            blocked: settings.blocked_processes,
-        };
+        let mut options = RunOptions::new(source);
+        options.countdown_sec = settings.countdown_sec.min(MAX_COUNTDOWN_SEC);
+        options.corner_stop = settings.corner_stop;
+        options.blocked = settings.blocked_processes;
+        options.start_node = start_node;
+        options.debug = debug;
         self.engine.start(plan, options)
+    }
+
+    /// Takes the "step" and "continue" hotkeys for a run with breakpoints, so
+    /// the target window keeps the focus. A key another program holds is left
+    /// out: the buttons in the window still work.
+    fn bind_debug_keys(&self) {
+        let settings = self.settings();
+        let mut bound = Vec::new();
+        for (hotkey_text, how) in [(settings.hotkey_step, Resume::Step), (settings.hotkey_continue, Resume::Continue)] {
+            if let Ok(hotkey) = hotkeys::parse(&hotkey_text) {
+                if hotkeys::register(&self.app, &hotkey, &hotkey_text).is_ok() {
+                    bound.push((hotkey, how));
+                }
+            }
+        }
+        let previous = std::mem::replace(&mut *lock(&self.debug_keys), bound);
+        for (hotkey, _) in previous {
+            hotkeys::unregister(&self.app, &hotkey);
+        }
+        // A run that ended before the keys were taken has nobody to give them back.
+        if !self.engine.is_running() {
+            self.release_debug_keys();
+        }
+    }
+
+    fn release_debug_keys(&self) {
+        let bound = std::mem::take(&mut *lock(&self.debug_keys));
+        for (hotkey, _) in bound {
+            hotkeys::unregister(&self.app, &hotkey);
+        }
+    }
+
+    /// Lets a run that is paused on a block make one step or go on.
+    pub fn resume(&self, how: Resume) {
+        self.engine.resume(how);
     }
 
     /// Stops a run, a countdown or a recording.
@@ -611,6 +726,7 @@ impl Core {
     }
 
     fn run_finished(&self, finished: &RunFinished) {
+        self.release_debug_keys();
         self.refresh_tray();
         if finished.outcome == Outcome::Failed && !window::main_visible(&self.app) {
             if let Some(reason) = &finished.reason {
@@ -659,8 +775,12 @@ impl Core {
         window::open_badge(&self.app).map_err(|_| AppError::new("recordFailed"))?;
         window::hide_main(&self.app);
         let settings = self.settings();
-        let stop_hotkey = lock(&self.start_stop).map(|hotkey| (hotkey.modifiers, hotkey.vk));
-        let options = RecordOptions { corner_stop: settings.corner_stop, stop_hotkey };
+        let mut own_hotkeys = Vec::new();
+        if let Some(hotkey) = *lock(&self.start_stop) {
+            own_hotkeys.push((hotkey.modifiers, hotkey.vk));
+        }
+        self.bind_record_keys(&settings, &mut own_hotkeys);
+        let options = RecordOptions { corner_stop: settings.corner_stop, own_hotkeys };
         match self.recorder.start(scenario_id, options) {
             Ok(target_window) => {
                 if let Some(hwnd) = target_window {
@@ -669,6 +789,7 @@ impl Core {
                 Ok(())
             }
             Err(error) => {
+                self.release_record_keys();
                 window::close_badge(&self.app);
                 window::show_main(&self.app);
                 Err(error)
@@ -676,7 +797,82 @@ impl Core {
         }
     }
 
+    /// Takes the recording hotkeys so the target window keeps the focus, and
+    /// collects them for the recorder so their presses are not written as steps.
+    fn bind_record_keys(&self, settings: &Settings, own: &mut Vec<(crate::model::scenario::Modifiers, u16)>) {
+        let wanted = [
+            (&settings.hotkey_record_pause, RecordKey::Pause),
+            (&settings.hotkey_record_wait_image, RecordKey::WaitImage),
+            (&settings.hotkey_record_click_image, RecordKey::ClickImage),
+        ];
+        let mut bound = Vec::new();
+        for (text, action) in wanted {
+            let Ok(Some(hotkey)) = hotkeys::parse_optional(text) else {
+                continue;
+            };
+            // The start/stop key is already held; it must not be registered twice.
+            let already = lock(&self.start_stop).is_some_and(|held| held.shortcut == hotkey.shortcut)
+                || bound.iter().any(|(held, _action): &(Hotkey, RecordKey)| held.shortcut == hotkey.shortcut);
+            if already {
+                own.push((hotkey.modifiers, hotkey.vk));
+                continue;
+            }
+            if hotkeys::register(&self.app, &hotkey, text).is_ok() {
+                own.push((hotkey.modifiers, hotkey.vk));
+                bound.push((hotkey, action));
+            }
+        }
+        let previous = std::mem::replace(&mut *lock(&self.record_keys), bound);
+        for (hotkey, _) in previous {
+            hotkeys::unregister(&self.app, &hotkey);
+        }
+    }
+
+    fn release_record_keys(&self) {
+        let bound = std::mem::take(&mut *lock(&self.record_keys));
+        for (hotkey, _) in bound {
+            hotkeys::unregister(&self.app, &hotkey);
+        }
+    }
+
+    /// Opens the region overlay during a recording: the cut becomes a wait step.
+    fn record_image(&self, click: bool) {
+        if !self.recorder.is_active() || lock(&self.region).is_some() {
+            return;
+        }
+        let Some(scenario_id) = self.recorder.scenario_id() else {
+            return;
+        };
+        let Ok(scenario) = self.store.load_scenario(&scenario_id) else {
+            return;
+        };
+        let target = match scenario.mode {
+            ScenarioMode::Window => Some(scenario.target.clone()),
+            ScenarioMode::Screen => None,
+        };
+        self.recorder.set_busy(true);
+        *lock(&self.region) = Some(RegionSession {
+            scenario_id,
+            purpose: RegionPurpose::Template,
+            target,
+            first: None,
+            record_click: Some(click),
+        });
+        if window::open_region(&self.app, screen::virtual_screen()).is_err() {
+            *lock(&self.region) = None;
+            window::close_region(&self.app);
+            self.recorder.set_busy(false);
+            let lang = self.lang();
+            notify(&self.app, "ClickIt", &error_text(&lang, &AppError::new("captureFailed")));
+        }
+    }
+
     fn record_finished(&self, finished: &RecordFinished) {
+        self.release_record_keys();
+        // A cut that was still open belongs to this recording.
+        if lock(&self.region).as_ref().is_some_and(|session| session.record_click.is_some()) {
+            self.region_cancel();
+        }
         window::close_badge(&self.app);
         if finished.added > 0 {
             self.data_changed(DataKind::Scenarios);
@@ -697,6 +893,142 @@ impl Core {
 
     fn data_changed(&self, kind: DataKind) {
         let _ = self.app.emit("data:changed", DataChanged { kind });
+    }
+
+    // List and canvas
+
+    /// Turns a list into a graph: in place, keeping the list as a backup, or
+    /// as a new scenario named `name`.
+    pub fn scenario_to_canvas(&self, id: &str, copy_name: Option<&str>) -> AppResult<Scenario> {
+        let scenario = match copy_name {
+            Some(name) => self.store.to_canvas_copy(id, name)?,
+            None => {
+                if self.scenario_in_use(id) {
+                    return Err(AppError::new("busy"));
+                }
+                self.store.to_canvas(id)?
+            }
+        };
+        self.refresh_tray();
+        Ok(scenario)
+    }
+
+    /// Brings back the list a graph was made from.
+    pub fn scenario_to_list(&self, id: &str) -> AppResult<Scenario> {
+        if self.scenario_in_use(id) {
+            return Err(AppError::new("busy"));
+        }
+        let scenario = self.store.to_list(id)?;
+        self.engine.clear_trace(id);
+        self.refresh_tray();
+        Ok(scenario)
+    }
+
+    /// Moves blocks of a graph into a new scenario and leaves a "Run
+    /// scenario" block in their place. Returns the changed scenario and the new one.
+    pub fn scenario_extract(&self, id: &str, node_ids: &[String], name: &str) -> AppResult<(Scenario, Scenario)> {
+        if self.scenario_in_use(id) {
+            return Err(AppError::new("busy"));
+        }
+        let mut source = self.store.load_scenario(id)?;
+        let mut created = Scenario::new_canvas(name);
+        created.mode = source.mode;
+        created.target = source.target.clone();
+        let graph = source.graph.as_mut().ok_or_else(|| AppError::new("invalid"))?;
+        created.graph = Some(graph.extract(node_ids, &created.id, name).map_err(AppError::new)?);
+        source.revision = source.revision.saturating_add(1);
+        self.store.save_extracted(&source, &created)?;
+        self.refresh_tray();
+        Ok((source, created))
+    }
+
+    /// Looks at a condition once, the way a run would, without clicking
+    /// anything. The ClickIt window leaves the screen for the look, so it does
+    /// not cover what is being looked for.
+    pub fn check_condition(
+        &self,
+        scenario_id: &str,
+        mode: ScenarioMode,
+        window_target: &WindowTarget,
+        condition: &Condition,
+    ) -> AppResult<CheckResult> {
+        if self.engine.is_running() || self.recorder.is_active() || self.is_updating() {
+            return Err(AppError::new("busy"));
+        }
+        if !self.store.scenario_exists(scenario_id) {
+            return Err(AppError::new("notFound"));
+        }
+        let dir = self.store.scenario_dir(scenario_id);
+        let hide = needs_screen(condition) && window::main_visible(&self.app);
+        if hide {
+            window::hide_main(&self.app);
+            thread::sleep(OVERLAY_HIDE_DELAY);
+        }
+        let result = check_now(mode, window_target, condition, &dir);
+        if hide {
+            window::show_main(&self.app);
+        }
+        result
+    }
+
+    // Cleanup
+
+    fn cleanup_item(&self, kind: CleanupKind) -> CleanupInfo {
+        let running = self.engine.is_running() || self.recorder.is_active();
+        let (usage, blocked) = match kind {
+            CleanupKind::Chats => {
+                (Usage::of(&self.store.cleanup_files(kind)), crate::agent::is_busy(self).then_some("chatBusy"))
+            }
+            CleanupKind::Connections => {
+                let (files, bytes) = crate::external::closed_usage(self);
+                (Usage { bytes, files }, None)
+            }
+            // A run may be reading these files right now.
+            CleanupKind::Templates | CleanupKind::Backups => {
+                (Usage::of(&self.store.cleanup_files(kind)), running.then_some("busy"))
+            }
+            CleanupKind::Cache => (self.cache_dir().map(|dir| Usage::of_dir(&dir)).unwrap_or_default(), None),
+            CleanupKind::Journal | CleanupKind::Leftovers => (Usage::of(&self.store.cleanup_files(kind)), None),
+        };
+        CleanupInfo { kind, bytes: usage.bytes, files: usage.files, blocked: blocked.map(str::to_string) }
+    }
+
+    /// Folder of the web view: its cache and what it keeps between launches.
+    fn cache_dir(&self) -> Option<std::path::PathBuf> {
+        self.app.path().app_local_data_dir().ok().map(|dir| dir.join("EBWebView"))
+    }
+
+    /// Sizes of what every "Clear" button of the settings would remove.
+    pub fn cleanup_info(&self) -> Vec<CleanupInfo> {
+        CleanupKind::ALL.iter().map(|kind| self.cleanup_item(*kind)).collect()
+    }
+
+    /// Removes one kind of data. Scenarios, queues, the schedule, the
+    /// settings, snippets, the model key and the harness token are never touched.
+    pub fn cleanup_run(&self, kind: CleanupKind) -> AppResult<Vec<CleanupInfo>> {
+        if let Some(code) = self.cleanup_item(kind).blocked {
+            return Err(AppError::new(&code));
+        }
+        match kind {
+            CleanupKind::Journal => self.journal.clear(),
+            CleanupKind::Chats => crate::agent::clear_chats(self)?,
+            CleanupKind::Connections => crate::external::forget_closed(self)?,
+            CleanupKind::Templates | CleanupKind::Leftovers => {
+                remove_files(&self.store.cleanup_files(kind));
+            }
+            CleanupKind::Backups => {
+                remove_files(&self.store.cleanup_files(kind));
+                // An open editor stops offering "Return the list".
+                self.data_changed(DataKind::Scenarios);
+            }
+            CleanupKind::Cache => {
+                if let Some(main) = self.app.get_webview_window(window::MAIN) {
+                    main.clear_all_browsing_data()
+                        .map_err(|error| AppError::new("io").with("message", error))?;
+                }
+            }
+        }
+        Ok(self.cleanup_info())
     }
 
     // Capture of a point
@@ -746,8 +1078,13 @@ impl Core {
             if !self.store.scenario_exists(scenario_id) {
                 return Err(AppError::new("notFound"));
             }
-            *lock(&self.region) =
-                Some(RegionSession { scenario_id: scenario_id.to_string(), purpose, target: window_target, first: None });
+            *lock(&self.region) = Some(RegionSession {
+                scenario_id: scenario_id.to_string(),
+                purpose,
+                target: window_target,
+                first: None,
+                record_click: None,
+            });
         }
         self.capture_cancel();
         window::hide_main(&self.app);
@@ -776,24 +1113,60 @@ impl Core {
             return;
         };
         window::close_region(&self.app);
+        let recording = session.record_click;
         let Some(first) = session.first else {
-            window::show_main(&self.app);
-            let _ = self.app.emit("region:cancelled", ());
+            if recording.is_some() {
+                self.recorder.set_busy(false);
+            } else {
+                window::show_main(&self.app);
+                let _ = self.app.emit("region:cancelled", ());
+            }
             return;
         };
         thread::sleep(OVERLAY_HIDE_DELAY);
         let result = region_result(&self.store, &session, first, second);
+        if let Some(click) = recording {
+            self.apply_record_image(&session, &result, click);
+            self.recorder.set_busy(false);
+            return;
+        }
         window::show_main(&self.app);
         let _ = self.app.emit("region:done", &result);
     }
 
     pub fn region_cancel(&self) {
         let session = lock(&self.region).take();
-        if session.is_some() {
+        if let Some(session) = session {
             window::close_region(&self.app);
-            window::show_main(&self.app);
-            let _ = self.app.emit("region:cancelled", ());
+            if session.record_click.is_some() {
+                self.recorder.set_busy(false);
+            } else {
+                window::show_main(&self.app);
+                let _ = self.app.emit("region:cancelled", ());
+            }
         }
+    }
+
+    /// Turns a cut made during a recording into a "Wait for the image" step.
+    fn apply_record_image(&self, session: &RegionSession, result: &RegionResult, click: bool) {
+        let lang = self.lang();
+        if let Some(error) = &result.error {
+            notify(&self.app, &text(&lang, "native.notify.recordImage", &[]), &error_text(&lang, error));
+            return;
+        }
+        let Some(template) = &result.template else {
+            return;
+        };
+        let area = match self.store.load_scenario(&session.scenario_id).map(|scenario| scenario.mode) {
+            Ok(ScenarioMode::Window) => Area::Client,
+            _ => Area::Screen,
+        };
+        self.recorder.add_step(Step::new(StepKind::wait_image(template.file.clone(), area, click)));
+        notify(
+            &self.app,
+            &text(&lang, "native.notify.recordImage", &[]),
+            &text(&lang, "native.notify.recordImageText", &[]),
+        );
     }
 
     // Export and import
@@ -919,11 +1292,25 @@ pub fn hotkey_pressed(app: &AppHandle, shortcut: &Shortcut) {
     with_core(app, |core| {
         let is_start_stop = lock(&core.start_stop).is_some_and(|hotkey| hotkey.shortcut == *shortcut);
         let is_capture = lock(&core.capture).as_ref().is_some_and(|session| session.hotkey.shortcut == *shortcut);
+        let resume = lock(&core.debug_keys).iter().find(|(hotkey, _)| hotkey.shortcut == *shortcut).map(|(_, how)| *how);
+        let record = lock(&core.record_keys).iter().find(|(hotkey, _)| hotkey.shortcut == *shortcut).map(|(_, action)| *action);
         let core = Arc::clone(core);
         if is_start_stop {
             thread::spawn(move || core.toggle(Source::Hotkey));
         } else if is_capture {
             thread::spawn(move || core.capture_shot());
+        } else if let Some(how) = resume {
+            core.resume(how);
+        } else if let Some(action) = record {
+            match action {
+                RecordKey::Pause => core.recorder.toggle_pause(),
+                RecordKey::WaitImage => {
+                    thread::spawn(move || core.record_image(false));
+                }
+                RecordKey::ClickImage => {
+                    thread::spawn(move || core.record_image(true));
+                }
+            }
         }
     });
 }
@@ -989,6 +1376,7 @@ mod tests {
         assert!(hud_while_hidden(RunState::Waiting));
         assert!(hud_while_hidden(RunState::PausedWindow));
         assert!(hud_while_hidden(RunState::PausedProcess));
+        assert!(hud_while_hidden(RunState::PausedBreak));
         assert!(!hud_while_hidden(RunState::Idle));
         assert!(!hud_while_hidden(RunState::Recording));
     }

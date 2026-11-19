@@ -85,3 +85,13 @@
   gap: 4px;
   padding: 0 8px 8px;
 }
+
+/* A canvas fills the column; it scrolls inside itself. */
+.scenarios-editor-canvas {
+  display: flex;
+  flex-direction: column;
+}
+
+.scenarios-create-name {
+  width: 100%;
+}

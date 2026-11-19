@@ -137,6 +137,16 @@ export function conditionSummary(condition: Condition, translator: Translator): 
       return t("conditions.summary.window", { title: condition.title });
     case "process":
       return t("conditions.summary.process", { name: condition.name });
+    case "all":
+    case "any": {
+      const first = condition.items[0];
+      const second = condition.items[1];
+      const blank = "…";
+      return t(condition.kind === "all" ? "conditions.summary.all" : "conditions.summary.any", {
+        first: first ? conditionSummary(first, translator) : blank,
+        second: second ? conditionSummary(second, translator) : blank,
+      });
+    }
     default: {
       const unreachable: never = condition;
       throw new Error(`Unknown condition: ${String(unreachable)}`);

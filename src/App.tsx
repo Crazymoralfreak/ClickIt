@@ -18,7 +18,7 @@ import { ScenariosPage } from "./features/scenarios/ScenariosPage";
 import { SchedulePage } from "./features/schedule/SchedulePage";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { I18nProvider, translate, useT, type TKey } from "./i18n";
-import type { AppError, AppInfo, DataKind, RunStatus, UpdateStatus } from "./types/runtime";
+import type { AppError, AppInfo, DataKind, RunOptions, RunStatus, UpdateStatus } from "./types/runtime";
 import type { Language, RunTarget, Settings } from "./types/scenario";
 import { Button, Modal, TextInput, cx } from "./ui";
 
@@ -149,7 +149,7 @@ function MainWindow({ boot }: { boot: Boot }) {
   }, []);
 
   const start = useCallback(
-    async (target?: RunTarget) => {
+    async (target?: RunTarget, options?: RunOptions) => {
       try {
         await flushAll();
         const current = settingsRef.current.current;
@@ -164,7 +164,7 @@ function MainWindow({ boot }: { boot: Boot }) {
             return;
           }
         }
-        await api.runStart(chosen);
+        await api.runStart(chosen, options);
       } catch (error) {
         showError(error);
       }

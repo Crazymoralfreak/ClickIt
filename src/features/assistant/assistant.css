@@ -38,21 +38,57 @@
   margin-bottom: 12px;
 }
 
-.assistant-connections {
+/* One row that scrolls sideways when the tabs do not fit. */
+.assistant-tabs {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
   max-width: 100%;
+  overflow-x: auto;
+  padding-bottom: 4px;
 }
 
 .assistant-tab {
   display: inline-flex;
+  flex: none;
   align-items: stretch;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
   overflow: hidden;
+}
+
+.assistant-tab-busy {
+  border-color: var(--accent);
+}
+
+.assistant-tab-input {
+  width: 180px;
+  margin: 2px 0 2px 4px;
+  padding: 2px 6px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.assistant-tab-add {
+  flex: none;
+  padding: 4px 11px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.assistant-tab-add:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 .assistant-tab-active {
@@ -71,7 +107,11 @@
 }
 
 .assistant-tab-label {
+  max-width: 240px;
   padding: 5px 2px 5px 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .assistant-tab-close {

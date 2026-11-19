@@ -84,6 +84,26 @@ const TOPICS: ReadonlyArray<HelpTopic> = [
     parts: [{ kind: "text", text: "help.ifElse.text" }],
   },
   {
+    title: "help.canvas.title",
+    parts: [
+      { kind: "text", text: "help.canvas.intro" },
+      { kind: "text", text: "help.canvas.blocks" },
+      { kind: "text", text: "help.canvas.links" },
+      {
+        kind: "list",
+        title: "help.canvas.partsTitle",
+        items: ["help.canvas.frames", "help.canvas.extract", "help.canvas.snippets", "help.canvas.undo"],
+      },
+      {
+        kind: "list",
+        title: "help.canvas.runTitle",
+        items: ["help.canvas.trace", "help.canvas.runFrom", "help.canvas.breakpoints", "help.canvas.check"],
+      },
+      { kind: "text", text: "help.canvas.intercept" },
+      { kind: "text", text: "help.canvas.limits" },
+    ],
+  },
+  {
     title: "help.recording.title",
     parts: [
       {
@@ -92,6 +112,7 @@ const TOPICS: ReadonlyArray<HelpTopic> = [
           "help.recording.button",
           "help.recording.badge",
           "help.recording.keys",
+          "help.recording.hotkeys",
           "help.recording.limits",
           "help.recording.shortPauses",
         ],
@@ -122,6 +143,7 @@ const TOPICS: ReadonlyArray<HelpTopic> = [
       { kind: "text", text: "help.harness.intro" },
       { kind: "text", text: "help.harness.mcp" },
       { kind: "text", text: "help.harness.assistant" },
+      { kind: "text", text: "help.harness.graph" },
       { kind: "text", text: "help.harness.shots" },
       { kind: "text", text: "help.harness.autoRun" },
       { kind: "text", text: "help.harness.missing" },
@@ -144,6 +166,10 @@ const TOPICS: ReadonlyArray<HelpTopic> = [
       { kind: "text", text: "help.updates.portable" },
       { kind: "text", text: "help.updates.manual" },
     ],
+  },
+  {
+    title: "help.data.title",
+    parts: [{ kind: "text", text: "help.data.text" }],
   },
   {
     title: "help.blocked.title",
@@ -193,7 +219,16 @@ export function HelpPage() {
   const { t } = useT();
   const { settings } = useApp();
   // Placeholders shared by all texts: the hotkeys as they are set right now.
-  const params: TParams = { startStop: settings.hotkeyStartStop, capture: settings.hotkeyCapture };
+  const none = t("settings.hotkeyNone");
+  const params: TParams = {
+    startStop: settings.hotkeyStartStop,
+    capture: settings.hotkeyCapture,
+    step: settings.hotkeyStep,
+    go: settings.hotkeyContinue,
+    pause: settings.hotkeyRecordPause || none,
+    waitImage: settings.hotkeyRecordWaitImage || none,
+    clickImage: settings.hotkeyRecordClickImage || none,
+  };
 
   return (
     <PageFrame title={t("nav.help")}>

@@ -449,6 +449,11 @@ fn sample_points(width: i32, height: i32) -> Vec<(i32, i32)> {
 /// `threshold` is refined to the best one nearby. Returns the top-left corner
 /// of the match in frame coordinates.
 pub fn find_template(frame: &Frame, template: &Template, threshold: f64) -> Option<(i32, i32)> {
+    find_template_scored(frame, template, threshold).map(|(place, _)| place)
+}
+
+/// `find_template` together with the similarity of the match, 0..=1.
+pub fn find_template_scored(frame: &Frame, template: &Template, threshold: f64) -> Option<((i32, i32), f64)> {
     let last_left = frame.rect.width - template.width;
     let last_top = frame.rect.height - template.height;
     if last_left < 0 || last_top < 0 {
@@ -466,7 +471,8 @@ pub fn find_template(frame: &Frame, template: &Template, threshold: f64) -> Opti
             }
         }
     }
-    Some(best.0)
+    let channels = template.width as f64 * template.height as f64 * 3.0;
+    Some((best.0, 1.0 - best.1 as f64 / (channels * 255.0)))
 }
 
 fn find_first(matcher: &Matcher, last_left: i32, last_top: i32) -> Option<(i32, i32)> {
@@ -662,7 +668,7 @@ mod tests {
         let height = 1080;
         let pixels = vec![(20u8, 40, 70); (width * height) as usize];
         let frame = frame_of(width, height, &pixels);
-        let template = Template { width: 360, height: 100, data: vec![210, 160, 40].repeat((360 * 100) as usize) };
+        let template = Template { width: 360, height: 100, data: [210, 160, 40].repeat((360 * 100) as usize) };
         let started = std::time::Instant::now();
         assert_eq!(find_template(&frame, &template, 0.9), None);
         let elapsed = started.elapsed();
@@ -675,7 +681,7 @@ mod tests {
         let height = 1080;
         let pixels = noise(width, height, 11);
         let frame = frame_of(width, height, &pixels);
-        let template = Template { width: 360, height: 100, data: vec![210, 160, 40].repeat((360 * 100) as usize) };
+        let template = Template { width: 360, height: 100, data: [210, 160, 40].repeat((360 * 100) as usize) };
         let started = std::time::Instant::now();
         assert_eq!(find_template(&frame, &template, 0.9), None);
         let elapsed = started.elapsed();

@@ -26,7 +26,8 @@
     "repeatForever": "Until stopped",
     "moveUp": "Move up",
     "moveDown": "Move down",
-    "loading": "Loading…"
+    "loading": "Loading…",
+    "open": "Open"
   },
   "status": {
     "idle": "Idle",
@@ -46,7 +47,9 @@
     "stepRepeat": "repeat {repeat} of {total}",
     "queueItem": "item {index} of {count}",
     "queueRound": "queue round {round} of {total}",
-    "queueRoundOpen": "queue round {round}"
+    "queueRoundOpen": "queue round {round}",
+    "pausedBreak": "Paused: breakpoint",
+    "recordingHeld": "Recording: paused"
   },
   "native": {
     "tray": {
@@ -69,7 +72,9 @@
       "updateAvailable": "ClickIt: a new version is out",
       "updateAvailableText": "Version {version} is out. Download it from the ClickIt releases page.",
       "updateInstalling": "ClickIt is updating",
-      "updateInstallingText": "Version {version} is being installed. ClickIt will start again afterwards."
+      "updateInstallingText": "Version {version} is being installed. ClickIt will start again afterwards.",
+      "recordImage": "ClickIt: image added to the recording",
+      "recordImageText": "A \"Wait for image\" step was added to the scenario."
     },
     "dialog": {
       "exportTitle": "Export scenario",
@@ -93,7 +98,7 @@
     "targetNotFocused": "Could not bring window {target} to the foreground",
     "hotkeyInvalid": "\"{hotkey}\" cannot be used as a hotkey",
     "hotkeyTaken": "\"{hotkey}\" is already taken by another program",
-    "hotkeySame": "Start/stop and capture cannot share one key",
+    "hotkeySame": "Hotkeys must differ from one another",
     "importBad": "The file is not a ClickIt scenario: {message}",
     "exportFailed": "Could not save the file: {message}",
     "captureFailed": "Could not capture the screen",
@@ -118,7 +123,18 @@
     "agentUnconfigured": "Set the address and the model name in the settings.",
     "agentBusy": "The assistant is still answering the previous message.",
     "agentFailed": "The request to the model failed: {message}",
-    "dialogOpen": "This connection is still open. The tab can be removed after the external program disconnects."
+    "dialogOpen": "This connection is still open. The tab can be removed after the external program disconnects.",
+    "chatBusy": "The model is still answering in this chat. Wait for the answer.",
+    "chatMissing": "This chat has already been deleted.",
+    "alreadyCanvas": "This scenario is already on the canvas",
+    "backupMissing": "The list this scenario was made from is gone",
+    "formatMismatch": "A save does not change the kind of a scenario: a list is saved with steps, a canvas with a graph",
+    "callMissing": "A \"Run scenario\" block points at a deleted scenario (block {step})",
+    "callTooDeep": "Scenarios run one another deeper than eight levels (block {step})",
+    "extractEmpty": "No block is selected",
+    "extractEntry": "\"Start\" and \"Intercept\" blocks cannot be moved out",
+    "extractManyEntries": "The pass enters the selected blocks in several places. Only a part with one way in can be moved out.",
+    "extractManyExits": "The pass leaves the selected blocks in several places. Only a part with one way out can be moved out."
   },
   "issues": {
     "nameEmpty": "Empty name",
@@ -146,6 +162,9 @@
     "areaEmpty": "The search area is empty",
     "titleEmpty": "Empty window title",
     "processEmpty": "Empty process name",
+    "conditionItems": "A combined condition is two checks",
+    "conditionDepth": "Combined conditions are nested more than four levels deep",
+    "focusEmpty": "Give a window title or a process name",
     "pollRange": "The polling interval must be from 20 to 60,000 ms",
     "timeoutNegative": "The timeout cannot be negative",
     "onFoundNotAllowed": "Clicking the match is only available for the \"image found\" condition",
@@ -153,7 +172,25 @@
     "breakOutsideLoop": "\"Exit loop\" is outside a \"Repeat\" block",
     "unreachableAfterForever": "Steps after this block will not run: it has no \"Exit loop\" step",
     "queueEmpty": "The queue has no scenarios",
-    "scenarioMissing": "The scenario was deleted"
+    "scenarioMissing": "The scenario was deleted",
+    "idDuplicate": "Two blocks have the same id",
+    "startMissing": "The scenario has no \"Start\" block",
+    "startMany": "The scenario has several \"Start\" blocks",
+    "interceptTooMany": "The scenario has more than eight \"Intercept\" blocks",
+    "interceptInterval": "The intercept interval must be at least 500 ms",
+    "interceptJoinsMain": "The intercept branch leads into a block of the main flow. An intercept needs a branch of its own.",
+    "edgeBroken": "A link leads to a block that does not exist",
+    "edgeBadPort": "The block has no such output",
+    "portTwice": "Two links leave one output",
+    "edgeIntoEntry": "No link may lead into a \"Start\" or \"Intercept\" block",
+    "unreachable": "The pass never gets to this block",
+    "callEmpty": "No scenario is chosen",
+    "callMissing": "The scenario was deleted",
+    "callCircular": "Scenarios run one another in a circle",
+    "callTooDeep": "Scenario calls are nested deeper than eight levels",
+    "callModeMismatch": "The scenario it runs has another mode. \"Whole screen\" and \"Window\" cannot be mixed.",
+    "callOtherWindow": "The scenario it runs names another window. It will work in the window of this scenario.",
+    "callInvalid": "The scenario it runs has errors"
   },
   "journal": {
     "codes": {
@@ -179,7 +216,9 @@
       "updateInstall": "Version {version} is being installed, ClickIt is restarting",
       "updateFailed": "Version {version} was not installed: {message}",
       "harnessCapture": "The assistant captured an image {width}×{height}",
-      "harnessTemplate": "The assistant saved template {file} for scenario {scenario}"
+      "harnessTemplate": "The assistant saved template {file} for scenario {scenario}",
+      "interceptFired": "Intercept in \"{name}\": block {step} fired",
+      "harnessCheck": "The assistant checked a condition in scenario \"{name}\""
     },
     "sources": {
       "manual": "manual",
@@ -225,7 +264,16 @@
     "stepCount": "steps: {count}",
     "listLabel": "Scenario list",
     "emptyTitle": "No scenarios yet",
-    "emptyText": "A scenario is a list of steps: clicks, keys, pauses and conditions. Press \"Create\", give the scenario a name, then add steps by hand or record your own actions."
+    "emptyText": "A scenario is a list of steps: clicks, keys, pauses and conditions. Press \"Create\", give the scenario a name, then add steps by hand or record your own actions.",
+    "blockCount": "blocks: {count}",
+    "canvasMark": "canvas",
+    "canvasCopyName": "{name} (canvas)",
+    "format": "Kind",
+    "formatList": "List",
+    "formatCanvas": "Canvas",
+    "formatListHint": "Steps run from top to bottom; branches and loops are nested blocks.",
+    "formatCanvasHint": "Blocks are placed anywhere and joined with links. It has intercepts, calls of other scenarios, breakpoints and a run trace.",
+    "deleteCalledText": "This scenario is run by: {names}. Their \"Run scenario\" blocks will stop working."
   },
   "editor": {
     "loadFailed": "Could not open the scenario",
@@ -265,7 +313,19 @@
     "stepWarning": "The step has a warning",
     "repeatBadge": "The step is repeated, times: {times}",
     "deleteBlockTitle": "Delete the block with its steps?",
-    "deleteBlockText": "The block has steps inside ({count}). They will be deleted too."
+    "deleteBlockText": "The block has steps inside ({count}). They will be deleted too.",
+    "settingsSection": "Scenario settings",
+    "openCanvas": "Open on the canvas",
+    "convertText": "Steps become blocks; branches and loops become links. \"Convert\" changes this scenario: the list is kept next to it and can be returned. \"Convert a copy\" leaves the list as it is and creates a new scenario.",
+    "convertHere": "Convert",
+    "convertCopy": "Convert a copy",
+    "convertedCopy": "Created scenario \"{name}\"",
+    "returnList": "Return the list",
+    "returnListTitle": "Return the list of steps?",
+    "returnListText": "The scenario becomes the list it was made from again. Everything changed on the canvas is lost.",
+    "startDebug": "Step by step",
+    "startDebugTitle": "The run pauses before every block. {step} runs the block, {go} goes on to the next breakpoint.",
+    "recordCanvasHint": "Recording adds a chain of blocks below the others. It is linked to \"Start\" only in an empty scenario."
   },
   "steps": {
     "types": {
@@ -394,7 +454,10 @@
       "loopWhileHint": "The condition is checked once before each pass, without waiting.",
       "loopPause": "Pause between passes",
       "breakLoopInfo": "Leaves the nearest \"Repeat\" block around this step. The scenario continues with the step after the block.",
-      "stopInfo": "Ends the scenario the same way as the \"Stop\" button."
+      "stopInfo": "Ends the scenario the same way as the \"Stop\" button.",
+      "pauseAfterBlock": "Pause after the block",
+      "repeatBlock": "Repeat the block",
+      "repeatBlockHint": "The pause after the block is applied once, after the last repeat."
     },
     "keyInput": {
       "listening": "Press a key…",
@@ -405,6 +468,11 @@
   },
   "conditions": {
     "kind": "What to check",
+    "shape": "Combination",
+    "shapeHint": "And holds when both checks hold. Or holds when at least one does. The second check is skipped once the first one decides it.",
+    "shapeOne": "One",
+    "shapeAll": "Both (and)",
+    "shapeAny": "Either (or)",
     "kinds": {
       "pixel": "Pixel colour",
       "imageFound": "Image found",
@@ -417,7 +485,9 @@
       "imageFound": "image found",
       "imageGone": "image gone",
       "window": "window \"{title}\" exists",
-      "process": "process {name} is running"
+      "process": "process {name} is running",
+      "all": "{first} and {second}",
+      "any": "{first} or {second}"
     },
     "point": "Point",
     "color": "Colour",
@@ -444,7 +514,17 @@
     "thresholdHint": "From 50 to 100 %.",
     "windowTitle": "Window title",
     "processName": "Process name",
-    "processHint": "Name of the executable file, for example notepad.exe"
+    "processHint": "Name of the executable file, for example notepad.exe",
+    "checkNow": "Check now",
+    "checkRunning": "Checking…",
+    "checkHint": "One screenshot, the same way a run takes it. The ClickIt window leaves the screen for that moment. Nothing is clicked.",
+    "checkHolds": "The condition holds.",
+    "checkFails": "The condition does not hold.",
+    "checkFound": "The image is found at {x}, {y}, similarity {score} %.",
+    "checkNotFound": "The image is not found.",
+    "checkWould": "It would be found at a similarity of {score} %.",
+    "checkColor": "The colour at the point is {color} now.",
+    "checkTime": "The check took {ms} ms."
   },
   "capture": {
     "point": "Capture point",
@@ -464,7 +544,9 @@
     "recordFinished": "Recording stopped, steps added: {added}",
     "recordNothing": "Nothing to record: there were no actions",
     "recordTimeLimit": "Recording stopped: 10 minute limit. Steps added: {added}",
-    "recordStepLimit": "Recording stopped: the scenario has 500 steps. Steps added: {added}"
+    "recordStepLimit": "Recording stopped: the scenario has 500 steps. Steps added: {added}",
+    "step": "Step",
+    "continue": "Continue"
   },
   "record": {
     "start": "Record actions",
@@ -607,7 +689,60 @@
     "noticePresence": "Another program may take into account the mere presence of an automation tool on the computer, even when the clicks do not go to it. ClickIt does not hide its process and does not mask its input. The application does not promise that such a program will not apply sanctions.",
     "noticeAdmin": "If the target window runs as administrator, Windows may refuse input from an ordinary process.",
     "data": "Data",
-    "dataDir": "Data folder"
+    "dataDir": "Data folder",
+    "hotkeyStep": "Step while debugging",
+    "hotkeyContinue": "Continue to the next breakpoint",
+    "hotkeyDebugHint": "Works only during a run with breakpoints or a step-by-step run.",
+    "cleanupTitle": "Cleanup",
+    "cleanupHint": "These buttons do not touch scenarios, queues, the schedule, settings, snippets or the model key.",
+    "cleanupClear": "Clear",
+    "cleanupSize": "{size}, files: {files}",
+    "cleanupEmpty": "empty",
+    "cleanupDone": "Cleared: {name}",
+    "cleanupConfirmTitle": "Clear: {name}?",
+    "sizeBytes": "{value} B",
+    "sizeKb": "{value} KB",
+    "sizeMb": "{value} MB",
+    "cleanup": {
+      "journal": {
+        "name": "Journal",
+        "text": "Entries of the current and the previous session."
+      },
+      "chats": {
+        "name": "Chats with the model",
+        "text": "All conversations on the \"Assistant\" page. One empty chat is left."
+      },
+      "connections": {
+        "name": "Connection records",
+        "text": "Tabs of closed external connections. Open ones stay."
+      },
+      "templates": {
+        "name": "Unused images",
+        "text": "Templates that no step, block or backup list refers to. Files younger than an hour are skipped."
+      },
+      "backups": {
+        "name": "Backup lists",
+        "text": "Lists left after a conversion to the canvas. \"Return the list\" will not work after this."
+      },
+      "cache": {
+        "name": "Window cache",
+        "text": "Service data of the built-in browser. Settings and scenarios are not affected."
+      },
+      "leftovers": {
+        "name": "Leftovers",
+        "text": "A damaged settings file and unfinished temporary files."
+      }
+    },
+    "hotkeyNone": "not assigned",
+    "hotkeyClear": "Clear",
+    "hotkeyClearTitle": "Leave this hotkey unassigned",
+    "hotkeyRecordGroup": "While recording",
+    "hotkeyRecordPause": "Pause recording",
+    "hotkeyRecordPauseHint": "Works only while a recording is going. Press again to resume.",
+    "hotkeyRecordWaitImage": "Cut image: wait",
+    "hotkeyRecordWaitImageHint": "While recording: select a region to add a \"Wait for image\" step.",
+    "hotkeyRecordClickImage": "Cut image: wait and click",
+    "hotkeyRecordClickImageHint": "Same as above, then the scenario clicks the centre of the match."
   },
   "journalView": {
     "refresh": "Refresh",
@@ -667,11 +802,12 @@
       "badge": "While recording is on, the recording badge stays visible on the screen all the time.",
       "keys": "Pressed keys and typed text end up in the scenario file on this computer.",
       "limits": "Recording is limited to 10 minutes and to 500 steps in the scenario.",
-      "shortPauses": "Pauses shorter than 50 ms are stored as 0."
+      "shortPauses": "Pauses shorter than 50 ms are stored as 0.",
+      "hotkeys": "While recording, {pause} pauses it, {waitImage} cuts an image and adds a \"Wait for image\" step, {clickImage} does the same and clicks the match. The keys are set in the settings; an empty field means the key is not assigned."
     },
     "startStop": {
       "title": "Start and stop",
-      "hotkeys": "Right now start and stop are on {startStop}, and point and colour capture is on {capture}. The capture key is active only while point capture is open. The keys are changed in the settings.",
+      "hotkeys": "Start and stop are currently {startStop}, point and colour capture is {capture}. The capture key works only while point capture is open. While recording: pause is {pause}, cutting an image is {waitImage} and {clickImage}. The keys are set in the settings.",
       "countdown": "A manual start is preceded by a countdown. Its length is set in the settings, 0 turns it off.",
       "stopTitle": "Emergency stop",
       "stopButton": "The \"Stop\" button.",
@@ -687,7 +823,8 @@
       "assistant": "On the Assistant page ClickIt calls the model address from the settings. The address presets are Ollama and LM Studio. A cloud model uses its own address and key. An empty address means the page does not use the network.",
       "shots": "With the connection on, the external program receives screenshots. The Assistant page sends screenshots and scenario text to the model address. There is no separate question for each shot.",
       "autoRun": "Starting without confirmation is off by default. While the box is unticked, both MCP and the assistant wait for an answer in the ClickIt window. Stopping asks no question.",
-      "missing": "This version has no queue, schedule, mouse and keyboard recording, or scenario deletion through an external connection."
+      "missing": "This version has no queue, schedule, mouse and keyboard recording, or scenario deletion through an external connection.",
+      "graph": "The assistant and external programs work with both kinds of a scenario: they build a graph, check a condition, start a scenario from a chosen block and read the trace of the last run. Blocks without coordinates are placed automatically. After ClickIt is updated, restart the connection in the external program so that it sees the new actions."
     },
     "tray": {
       "title": "Tray and schedule",
@@ -714,6 +851,28 @@
       "presence": "Another program may take the presence of an automation tool on the computer into account. There is no guarantee that it will not apply sanctions.",
       "admin": "Windows running as administrator may not accept input from an ordinary process.",
       "layout": "The keyboard layout is not switched automatically."
+    },
+    "canvas": {
+      "title": "Canvas",
+      "intro": "A scenario is stored in one of two kinds: a list of steps or a canvas with blocks and links. The kind is chosen when the scenario is created. A list opens on the canvas with the \"Open on the canvas\" button: \"Convert\" changes the scenario itself and keeps the list so that it can be returned, \"Convert a copy\" creates a new scenario.",
+      "blocks": "Action blocks are the same as the steps of a list, plus \"Activate window\". \"Wait for a condition\" waits, \"Condition\" picks one of two branches. A check can be a single one or an \"and\" / \"or\" of two. \"Counter\" lets the pass into \"body\" a given number of times, \"While\" does it while a condition holds or until it holds. \"Run scenario\" makes one pass of another scenario, \"Intercept\" watches for an obstacle on top of the main flow.",
+      "links": "One link leaves an output; a block may have any number of incoming links. An output without a link ends the pass. A \"timeout\" output without a link stops the scenario with a failure. A loop is a link going back; it is drawn dashed.",
+      "partsTitle": "Parts of a scenario",
+      "frames": "Frames and notes split a scenario into parts. A collapsed frame looks like one block.",
+      "extract": "\"Move out to a scenario\" turns the selected blocks into a scenario of their own when one way leads into them and one way leads out.",
+      "snippets": "Snippets are ready-made pieces in the list of blocks. Your own are saved with \"Save as a snippet\".",
+      "undo": "Ctrl+Z undoes an edit, Ctrl+Y brings it back. An edit by the assistant goes into the undo history too.",
+      "runTitle": "Running and debugging",
+      "trace": "During a run the working block is outlined and a dot runs along the link the pass took. After the stop a trace stays: the number of passes and the block where everything ended.",
+      "runFrom": "\"Run from here\" makes one pass from the chosen block, without the repeats of the scenario.",
+      "breakpoints": "A breakpoint is set with a click on the left edge of a block and applies only to a run started from the editor. On a pause {step} runs one block and {go} goes on to the next breakpoint. \"Step by step\" pauses before every block.",
+      "check": "\"Check now\" in the form of a condition takes one screenshot and shows whether the image is found, where and with what similarity. Nothing is clicked.",
+      "intercept": "\"Intercept\" is checked before every block and on every poll of a wait, but not more often than its interval. After its branch the interrupted block starts again.",
+      "limits": "A graph built on the canvas is not converted to a list: only the list it was made from can be returned. ClickIt 1.0.1 and older do not show canvas scenarios."
+    },
+    "data": {
+      "title": "Data and cleanup",
+      "text": "The \"Data\" block of the settings has separate cleanup buttons: the journal, chats with the model, connection records, unused images, backup lists, the window cache and leftovers. They do not touch scenarios, queues, the schedule or settings."
     }
   },
   "about": {
@@ -755,7 +914,16 @@
     "needSettings": "Set the address and the model name in the settings first.",
     "notice": "Screenshots and scenario text go to the address from the settings.",
     "local": "Model",
+    "chatsLabel": "Chats with the model",
+    "chatNew": "New chat",
+    "chatClose": "Delete chat",
+    "chatAnswering": "The model is still answering in this chat. It can be deleted after the answer.",
+    "chatRename": "Double-click to rename",
+    "chatDeleteTitle": "Delete the chat \"{name}\"?",
+    "chatDeleteText": "The conversation of this chat will be deleted. This cannot be undone.",
+    "busyElsewhere": "The model is answering in another chat",
     "connections": "Connections",
+    "connectionsLabel": "External connections",
     "connectionsEmpty": "No calls yet.",
     "connectionsNotice": "The words of the chat stay with the external program. Here are the ClickIt actions for \"{client}\".",
     "connectionForget": "Close tab",
@@ -792,7 +960,152 @@
       "color": "{color} · {x}, {y}",
       "template": "Template {file}, {width}×{height}",
       "done": "Done",
-      "closed": "Connection closed"
+      "closed": "Connection closed",
+      "converted": "Scenario \"{name}\" is on the canvas now",
+      "conditionHolds": "The condition holds",
+      "conditionFails": "The condition does not hold",
+      "trace": "Trace of the last run",
+      "traceNone": "There is no run trace"
     }
+  },
+  "canvas": {
+    "types": {
+      "start": "Start",
+      "branch": "Condition",
+      "counter": "Counter",
+      "while": "While",
+      "focus": "Activate window",
+      "call": "Run scenario",
+      "intercept": "Intercept"
+    },
+    "roles": {
+      "entry": "Start of a flow",
+      "action": "Actions",
+      "check": "Checks",
+      "control": "Control"
+    },
+    "ports": {
+      "next": "next",
+      "found": "found",
+      "timeout": "timeout",
+      "yes": "yes",
+      "no": "no",
+      "body": "body",
+      "done": "done"
+    },
+    "portEnd": "An output without a link: the pass ends here",
+    "portEndTimeout": "An output without a link: on a timeout the scenario stops with a failure",
+    "portEndMark": "end of the pass",
+    "summary": {
+      "start": "The pass begins here",
+      "branch": "If {condition}",
+      "counter": "Passes into \"body\": {times}",
+      "while": "While {condition}",
+      "whileUntil": "Until {condition}",
+      "focus": "Window \"{name}\"",
+      "focusEmpty": "No window set",
+      "call": "Scenario \"{name}\"",
+      "callNone": "No scenario is chosen",
+      "callGone": "The scenario was deleted",
+      "intercept": "When {condition}"
+    },
+    "toolbar": {
+      "blocks": "Blocks",
+      "blocksTitle": "Show or hide the list of blocks",
+      "note": "Note",
+      "frame": "Frame",
+      "frameTitle": "A frame around the selected blocks or an empty frame",
+      "undo": "Undo",
+      "redo": "Redo",
+      "arrange": "Arrange",
+      "arrangeTitle": "Place the blocks again along their links",
+      "fit": "Show all",
+      "grid": "Grid",
+      "gridTitle": "Snap blocks to the grid",
+      "follow": "Follow",
+      "followTitle": "Keep the working block in view",
+      "clearTrace": "Clear the trace",
+      "extract": "Move out to a scenario",
+      "saveSnippet": "Save as a snippet",
+      "hideList": "Hide the list of scenarios",
+      "showList": "Show the list of scenarios",
+      "selected": "Selected: {count}"
+    },
+    "block": {
+      "breakpointSet": "Set a breakpoint",
+      "breakpointRemove": "Remove the breakpoint",
+      "off": "off",
+      "passes": "Passes in the last run: {count}",
+      "checks": "checks: {count}",
+      "counter": "{pass} of {total}",
+      "inner": "inside: step {step}",
+      "phaseAction": "running",
+      "phaseCheck": "checking the condition",
+      "phasePause": "pause",
+      "phaseBreak": "paused on a breakpoint",
+      "endedCompleted": "The run ended here",
+      "endedStopped": "Stopped here",
+      "endedFailed": "Failed here",
+      "issueError": "The block has an error",
+      "issueWarning": "The block has a warning",
+      "repeatBadge": "The block repeats, times: {times}",
+      "frameBlocks": "blocks: {count}"
+    },
+    "inspector": {
+      "close": "Close the panel",
+      "title": "Title",
+      "titlePlaceholder": "Your own name of the block",
+      "enabled": "Run this block",
+      "runFrom": "Run from here",
+      "runFromHint": "A trial run: one pass from this block, without the repeats of the scenario.",
+      "startInfo": "Every pass begins at this block. A scenario has one.",
+      "waitHint": "When the condition is met the pass takes the \"found\" output. When the time is out it takes \"timeout\"; with no link there the scenario stops with a failure.",
+      "branchTimeoutHint": "0 means one check right away. If the condition is met within this time the pass takes the \"yes\" output, otherwise \"no\".",
+      "counterTimes": "Number of passes",
+      "counterHint": "The counter lets the pass into the \"body\" output the given number of times and then into \"done\". Link the end of the body back to the counter. The count starts again on every round of the scenario.",
+      "counterPause": "Pause between passes",
+      "whileModeLabel": "When to enter the body",
+      "whileMode": "While it holds",
+      "untilMode": "Until it holds",
+      "whileHint": "The condition is checked once on entry. Link the end of the body back to this block. The \"done\" output is taken when the loop ends.",
+      "focusHint": "The window is found by its title, its process, or both. The run stops when it is not open. Windows may refuse to bring it to the front; the block does not wait for that.",
+      "callScenario": "Scenario",
+      "callNone": "— choose a scenario —",
+      "callHint": "One pass of the chosen scenario runs in the window and the mode of this scenario. Its own repeat and pause between rounds are ignored.",
+      "interceptInterval": "Check not more often than every",
+      "interceptHint": "The intercept is checked before every block and on every poll of a wait. When the condition is met, the current block is interrupted, the intercept branch runs, and then the interrupted block starts again.",
+      "interceptFast": "Every check is a search of the screen. With an interval under a second the scenario may slow down noticeably.",
+      "noteText": "Text of the note",
+      "frameTitle": "Title of the frame",
+      "color": "Colour",
+      "colorNone": "No colour",
+      "collapsed": "Collapse the frame into one block",
+      "lastPasses": "Passes in the last run: {count}",
+      "lastPort": "Last output: \"{port}\""
+    },
+    "palette": {
+      "hint": "Click or drag onto the canvas.",
+      "snippets": "Snippets",
+      "snippetsEmpty": "You have no snippets yet. Select blocks and press \"Save as a snippet\".",
+      "snippetDelete": "Delete the snippet",
+      "snippetDeleteTitle": "Delete snippet \"{name}\"?",
+      "builtinWaitClick": "Wait and click",
+      "builtinRepeat": "Repeat N times",
+      "builtinUntil": "Until the condition holds",
+      "builtinRetry": "If not, refresh and check again"
+    },
+    "limit": "The scenario already has {max} blocks, no more can be added",
+    "emptyHint": "Add a block from the list on the left or drag a link from \"Start\" to an empty place.",
+    "noteDefault": "Note",
+    "frameDefault": "Frame",
+    "snippetTitle": "New snippet",
+    "snippetName": "Snippet",
+    "snippetSaved": "Snippet \"{name}\" is saved",
+    "extractTitle": "Move out to a scenario",
+    "extractName": "Part of the scenario",
+    "extracted": "Created scenario \"{name}\"",
+    "collapse": "Collapse",
+    "expand": "Expand",
+    "bendHint": "A double click on a link adds a bend point, a double click on the point removes it"
   }
 }

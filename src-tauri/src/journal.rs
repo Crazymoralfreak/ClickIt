@@ -71,6 +71,16 @@ impl Journal {
         }
     }
 
+    /// Removes both files. The next entry starts the journal anew.
+    pub fn clear(&self) {
+        {
+            let _guard = self.lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let _ = fs::remove_file(&self.path);
+            let _ = fs::remove_file(&self.prev_path);
+        }
+        (self.on_change)();
+    }
+
     /// Previous session followed by the current one, oldest first.
     pub fn read(&self) -> Vec<JournalEntry> {
         let _guard = self.lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());

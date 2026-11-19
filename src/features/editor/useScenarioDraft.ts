@@ -6,7 +6,7 @@ import { useAppEvent } from "../../api/events";
 import { useApp } from "../../app/context";
 import type { Issue } from "../../types/runtime";
 import type { Scenario, ScenarioMode } from "../../types/scenario";
-import { countSteps } from "./tree";
+import { stepCountOf } from "../canvas/graph";
 
 const SAVE_DELAY_MS = 400;
 
@@ -18,7 +18,7 @@ interface ListedFields {
 }
 
 function listedFields(scenario: Scenario): ListedFields {
-  return { name: scenario.name, mode: scenario.mode, stepCount: countSteps(scenario.steps) };
+  return { name: scenario.name, mode: scenario.mode, stepCount: stepCountOf(scenario) };
 }
 
 function sameIssues(a: ReadonlyArray<Issue>, b: ReadonlyArray<Issue>): boolean {

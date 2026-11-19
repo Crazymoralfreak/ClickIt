@@ -1,7 +1,7 @@
 // App-wide state shared by every screen of the main window.
 
 import { createContext, useContext } from "react";
-import type { AppInfo, DataKind, RunStatus, UpdateStatus } from "../types/runtime";
+import type { AppInfo, DataKind, RunOptions, RunStatus, UpdateStatus } from "../types/runtime";
 import type { RunTarget, Settings } from "../types/scenario";
 
 export type Page = "scenarios" | "queues" | "schedule" | "assistant" | "settings" | "journal" | "help" | "about";
@@ -29,8 +29,9 @@ export interface AppContextValue {
   status: RunStatus;
   /** True while something runs or records: scenarios and queues must not be edited. */
   locked: boolean;
-  /** Saves pending edits, optionally makes `target` the current one, then starts it. */
-  start: (target?: RunTarget) => Promise<void>;
+  /** Saves pending edits, optionally makes `target` the current one, then starts it.
+   *  `options` carry the breakpoints of the open editor and the block of a trial run. */
+  start: (target?: RunTarget, options?: RunOptions) => Promise<void>;
   stop: () => Promise<void>;
 
   /** What is known about a newer version in this session. */

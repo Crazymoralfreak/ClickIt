@@ -29,9 +29,9 @@ function Badge() {
   }, []);
   useAppEvent("run:status", setStatus);
 
-  const paused = status.recording?.paused === true;
+  const quiet = status.recording?.held === true || status.recording?.paused === true;
   return (
-    <div className={paused ? "badge badge-paused" : "badge"} data-tauri-drag-region>
+    <div className={quiet ? "badge badge-paused" : "badge"} data-tauri-drag-region>
       <span className="badge-dot" />
       <span className="badge-text" data-tauri-drag-region>
         <span className="badge-headline" data-tauri-drag-region>

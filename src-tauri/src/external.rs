@@ -165,6 +165,25 @@ pub fn forget(core: &Core, session_id: u64) -> AppResult<()> {
     Ok(())
 }
 
+/// Number of closed connections and the size of their lines in the file.
+pub fn closed_usage(core: &Core) -> (usize, u64) {
+    let mut inner = lock(core);
+    ensure_loaded(core, &mut inner);
+    let closed: Vec<Dialog> = inner.dialogs.iter().filter(|dialog| !dialog.open).cloned().collect();
+    let bytes = journal_text(&closed).map(|text| text.len() as u64).unwrap_or(0);
+    (closed.len(), bytes)
+}
+
+/// Drops every closed connection. The open ones stay: the pipe is still writing to them.
+pub fn forget_closed(core: &Core) -> AppResult<()> {
+    let mut inner = lock(core);
+    ensure_loaded(core, &mut inner);
+    let kept: Vec<Dialog> = inner.dialogs.iter().filter(|dialog| dialog.open).cloned().collect();
+    write_dialogs(&core.store.harness_dialog_path(), &kept)?;
+    inner.dialogs = kept;
+    Ok(())
+}
+
 /// Removes a closed dialog. `None` when that id is already gone. An open dialog is left in place.
 fn take_closed(dialogs: &mut Vec<Dialog>, session_id: u64) -> AppResult<Option<(usize, Dialog)>> {
     let Some(index) = dialogs.iter().position(|dialog| dialog.id == session_id) else {
@@ -223,7 +242,7 @@ fn note(lang: &str, method: &str, params: &Value, outcome: &AppResult<Value>) ->
 
 fn call_line(method: &str, params: &Value) -> String {
     let detail = match method {
-        "get_scenario" | "run_scenario" => field(params, "id"),
+        "get_scenario" | "run_scenario" | "convert_scenario" | "check_condition" | "get_trace" => field(params, "id"),
         "create_scenario" => field(params, "name"),
         "save_scenario" | "validate_scenario" => scenario_label(params),
         "capture_screen" | "save_template" => rect_label(params),
@@ -259,6 +278,13 @@ fn result_line(lang: &str, method: &str, result: &Value) -> String {
             _ => line(lang, "runError", &[]),
         },
         "stop_scenario" => line(lang, "stopped", &[]),
+        "convert_scenario" => line(lang, "converted", &[("name", &name_of(result))]),
+        "check_condition" => {
+            let holds = result.get("holds").and_then(Value::as_bool).unwrap_or(false);
+            line(lang, if holds { "conditionHolds" } else { "conditionFails" }, &[])
+        }
+        "get_trace" if result.get("trace").is_some_and(|trace| !trace.is_null()) => line(lang, "trace", &[]),
+        "get_trace" => line(lang, "traceNone", &[]),
         "capture_screen" => line(lang, "capture", &[("width", &num(result, "width")), ("height", &num(result, "height"))]),
         "pixel_color" => line(lang, "color", &[("color", &field(result, "color")), ("x", &num(result, "x")), ("y", &num(result, "y"))]),
         "save_template" => line(
@@ -279,6 +305,7 @@ fn status_line(lang: &str, result: &Value) -> String {
         "waiting" => "status.waiting",
         "pausedWindow" => "status.pausedWindow",
         "pausedProcess" => "status.pausedProcess",
+        "pausedBreak" => "status.pausedBreak",
         "recording" => "status.recording",
         _ => "agent.externalLines.done",
     };

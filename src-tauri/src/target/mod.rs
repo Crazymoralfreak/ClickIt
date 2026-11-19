@@ -11,9 +11,9 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetClientRect, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
-    GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SetForegroundWindow, ShowWindow, WindowFromPoint,
-    SW_RESTORE,
+    EnumWindows, GetAncestor, GetClientRect, GetForegroundWindow, GetWindowRect, GetWindowTextLengthW,
+    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, SetForegroundWindow, ShowWindow,
+    WindowFromPoint, GA_ROOT, SW_RESTORE,
 };
 
 use crate::model::scenario::{TitleMatch, WindowTarget};
@@ -211,9 +211,17 @@ pub fn request_focus(hwnd: Hwnd) {
 
 /// Whether the window under the point belongs to ClickIt itself (the badge, the main window).
 pub fn own_window_at(x: i32, y: i32) -> bool {
-    // SAFETY: WindowFromPoint has no preconditions; a null result is handled by `window_pid`.
-    let hwnd = unsafe { WindowFromPoint(POINT { x, y }) };
-    !hwnd.0.is_null() && window_pid(hwnd) == std::process::id()
+    // SAFETY: neither call has preconditions; null handles are checked.
+    let top = unsafe {
+        let hwnd = WindowFromPoint(POINT { x, y });
+        if hwnd.0.is_null() {
+            return false;
+        }
+        // The point is over a child window of the web view, and that one belongs to
+        // the WebView2 process. The top-level window above it is the one ClickIt made.
+        GetAncestor(hwnd, GA_ROOT)
+    };
+    !top.0.is_null() && window_pid(top) == std::process::id()
 }
 
 /// Client area of a window in virtual-screen pixels.

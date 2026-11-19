@@ -109,6 +109,16 @@ impl Normalizer {
         self.steps
     }
 
+    /// Puts a ready step after what was recorded so far: the gap before it
+    /// becomes the pause of the previous step, like for an action of the user.
+    pub fn insert(&mut self, step: Step, at: u64) {
+        self.close_gap(at);
+        self.steps.push(step);
+        self.last_end = Some(at);
+        self.text_open = false;
+        self.wheel_open = false;
+    }
+
     /// Forgets a button that went down: its release happened where nothing is recorded.
     pub fn cancel_press(&mut self) {
         self.pressed = None;
@@ -385,6 +395,21 @@ mod tests {
         let steps = n.finish();
         assert_eq!(steps.len(), 3);
         assert!(matches!(&steps[2].kind, StepKind::Key { key, action: KeyAction::Up, .. } if key == "ShiftLeft"));
+    }
+
+    #[test]
+    fn an_inserted_step_takes_its_place_in_time_and_ends_a_text() {
+        let mut n = Normalizer::new();
+        n.push(0, key(0x48, Some('h'), Modifiers::default()));
+        n.insert(Step::new(StepKind::Stop), 400);
+        n.push(700, key(0x49, Some('i'), Modifiers::default()));
+        let steps = n.finish();
+        assert_eq!(steps.len(), 3);
+        assert_eq!(steps[0].pause_after, Pause::exact(400));
+        assert!(matches!(steps[1].kind, StepKind::Stop));
+        assert_eq!(steps[1].pause_after, Pause::exact(300));
+        // The character typed after it is a new text step, not a part of the first one.
+        assert!(matches!(&steps[2].kind, StepKind::Text { text } if text == "i"));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+pub mod graph;
 pub mod queue;
 pub mod scenario;
 pub mod schedule;

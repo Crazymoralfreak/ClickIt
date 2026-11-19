@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
+use crate::model::graph::Port;
 use crate::model::schedule::TargetKind;
 
 /// Positions inside a run are sent at most this often; state changes go out at once.
@@ -31,6 +32,8 @@ pub enum RunState {
     Waiting,
     PausedWindow,
     PausedProcess,
+    /// Stopped on a breakpoint or between two steps of a step-by-step run.
+    PausedBreak,
     Recording,
 }
 
@@ -56,7 +59,10 @@ pub struct QueueProgress {
 pub struct RecordingProgress {
     pub scenario_id: String,
     pub steps: usize,
+    /// The "Window" mode waits for its window to become the active one.
     pub paused: bool,
+    /// The user paused the recording, or is selecting an image for it.
+    pub held: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
@@ -96,6 +102,64 @@ impl Outcome {
             Outcome::Failed => "failed",
         }
     }
+}
+
+/// What the block of a graph that is being executed is busy with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Phase {
+    Action,
+    Check,
+    Pause,
+}
+
+/// A pass went from one block to the next one. `to` is `None` at an output without a link.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceMove {
+    pub from: String,
+    pub port: Port,
+    pub to: Option<String>,
+}
+
+/// How the run of a graph ended and on which block.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TraceStop {
+    pub node: Option<String>,
+    pub outcome: Outcome,
+    pub reason: Option<AppError>,
+}
+
+/// Payload of the `run:trace` event: where a graph scenario is and where it
+/// has been. Sent at most ten times a second. The last one of every scenario
+/// stays in memory until its next run.
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RunTrace {
+    pub scenario_id: String,
+    /// Grows with every run, so a new trace is told from the previous one.
+    pub run: u64,
+    /// The block being executed.
+    pub node: Option<String>,
+    pub phase: Option<Phase>,
+    /// How long the phase lasts when that is known: a timeout or a pause.
+    pub phase_ms: Option<u64>,
+    /// How many times the condition of the current block was looked at.
+    pub checks: u64,
+    /// Transitions since the previous event, oldest first. In the stored
+    /// trace: the last ones of the run.
+    pub moves: Vec<TraceMove>,
+    /// How many times every block was entered.
+    pub node_passes: BTreeMap<String, u64>,
+    /// How many times every link was taken; the key is `<block id>:<output>`.
+    pub edge_passes: BTreeMap<String, u64>,
+    /// The output every block was left through last.
+    pub outcomes: BTreeMap<String, Port>,
+    /// Passes done and total of the counters that are in their body now.
+    pub counters: BTreeMap<String, (i64, i64)>,
+    /// Set by the last event of a run.
+    pub stop: Option<TraceStop>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -577,7 +577,8 @@ p {
 
 .runbar-countdown .runbar-dot,
 .runbar-pausedWindow .runbar-dot,
-.runbar-pausedProcess .runbar-dot {
+.runbar-pausedProcess .runbar-dot,
+.runbar-pausedBreak .runbar-dot {
   background: var(--warning);
 }
 

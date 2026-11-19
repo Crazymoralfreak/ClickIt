@@ -1,6 +1,6 @@
 // Runtime payloads exchanged with the Rust core (commands and events).
 
-import type { Language, TargetKind } from "./scenario";
+import type { Language, Port, Scenario, ScenarioSummary, TargetKind } from "./scenario";
 
 /** Error returned by any command: `errors.<code>` in the dictionaries, `params` fill placeholders. */
 export type AgentRole = "user" | "assistant" | "tool";
@@ -11,6 +11,17 @@ export interface AgentEntry {
   role: AgentRole;
   text: string;
   imagePng?: string;
+}
+
+/** One chat with the model. An empty `title` is shown as "New chat". */
+export interface ChatInfo {
+  id: string;
+  title: string;
+  /** Local `YYYY-MM-DDTHH:MM:SS`. */
+  created: string;
+  entryCount: number;
+  /** The model is answering in this chat right now. */
+  busy: boolean;
 }
 
 /** Who spoke a line in an external harness dialog. */
@@ -74,6 +85,8 @@ export type RunState =
   | "waiting"
   | "pausedWindow"
   | "pausedProcess"
+  /** Stopped on a breakpoint or between two blocks of a step-by-step run. */
+  | "pausedBreak"
   | "recording";
 
 export interface RunStatus {
@@ -100,7 +113,7 @@ export interface RunStatus {
   queue: { itemIndex: number; itemCount: number; round: number; roundsTotal: number | null } | null;
   /** Executable that caused the "pausedProcess" state. */
   blockedProcess: string | null;
-  recording: { scenarioId: string; steps: number; paused: boolean } | null;
+  recording: { scenarioId: string; steps: number; paused: boolean; held: boolean } | null;
 }
 
 export interface RunFinished {
@@ -108,6 +121,100 @@ export interface RunFinished {
   outcome: "completed" | "stopped" | "failed";
   /** Why it stopped or failed; null for a normal completion. */
   reason: AppError | null;
+}
+
+/** Breakpoints of the open editor and the block a trial run starts from. */
+export interface RunOptions {
+  /** One pass of a graph from this block, without the repeats of the scenario. */
+  startNode?: string;
+  debug?: {
+    breakpoints: string[];
+    /** Pause before every block, starting with the first one. */
+    step: boolean;
+  };
+}
+
+export type TracePhase = "action" | "check" | "pause";
+
+/** A pass went from one block to the next one. `to` is null at an output without a link. */
+export interface TraceMove {
+  from: string;
+  port: Port;
+  to: string | null;
+}
+
+export interface TraceStop {
+  node: string | null;
+  outcome: RunFinished["outcome"];
+  reason: AppError | null;
+}
+
+/** Where a graph scenario is and where it has been. Sent at most ten times a second. */
+export interface RunTrace {
+  scenarioId: string;
+  /** Grows with every run. */
+  run: number;
+  /** The block being executed. */
+  node: string | null;
+  phase: TracePhase | null;
+  /** How long the phase lasts when that is known: a timeout or a pause. */
+  phaseMs: number | null;
+  /** How many times the condition of the current block was looked at. */
+  checks: number;
+  /** Transitions since the previous event; in a stored trace, the last ones of the run. */
+  moves: TraceMove[];
+  nodePasses: Record<string, number>;
+  /** The key is `<block id>:<output>`. */
+  edgePasses: Record<string, number>;
+  /** The output every block was left through last. */
+  outcomes: Record<string, Port>;
+  /** Passes done and total of the counters that are in their body now. */
+  counters: Record<string, [number, number]>;
+  /** Set by the last event of a run. */
+  stop: TraceStop | null;
+}
+
+/** One look at a condition: "Check now". */
+export interface CheckResult {
+  holds: boolean;
+  /** For an image: whether it is on the screen, whatever the condition asks for. */
+  found: boolean | null;
+  /** Centre of the found image, in virtual-screen pixels. */
+  x: number | null;
+  y: number | null;
+  clientX: number | null;
+  clientY: number | null;
+  /** Similarity of the found image, 0..1. */
+  score: number | null;
+  /** Set when the image is not found at its threshold but would be at this similarity. */
+  wouldMatchAt: number | null;
+  /** For a pixel: the colour that is there now. */
+  color: string | null;
+  ms: number;
+}
+
+export type CleanupKind = "journal" | "chats" | "connections" | "templates" | "backups" | "cache" | "leftovers";
+
+/** What one "Clear" button of the settings would remove right now. */
+export interface CleanupInfo {
+  kind: CleanupKind;
+  bytes: number;
+  files: number;
+  /** Error code of the reason the button cannot be used right now. */
+  blocked: string | null;
+}
+
+export interface ScenarioMeta {
+  /** The list this graph was made from is still there, so it can be returned. */
+  hasBackup: boolean;
+  /** Scenarios whose "Run scenario" blocks run this one. */
+  callers: ScenarioSummary[];
+}
+
+export interface Extracted {
+  /** The scenario the blocks were taken from, with a "Run scenario" block in their place. */
+  scenario: Scenario;
+  created: Scenario;
 }
 
 export interface RecordFinished {
