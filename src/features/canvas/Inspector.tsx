@@ -1,19 +1,23 @@
+import { useState } from "react";
 import { useApp } from "../../app/context";
 import { useT } from "../../i18n";
 import type { Issue } from "../../types/runtime";
 import {
   MAX_STEP_REPEAT,
   MIN_INTERCEPT_MS,
+  type FocusNode,
   type GraphNode,
   type GraphNote,
+  type WindowTarget,
   type IfStep,
   type ScenarioSummary,
   type Step,
   type WaitStep,
 } from "../../types/scenario";
-import { Button, Checkbox, Field, NumberInput, PauseInput, Select, TextInput, cx, type Option } from "../../ui";
+import { Button, Checkbox, Field, NumberInput, PauseInput, Segmented, Select, TextInput, cx, type Option } from "../../ui";
 import { ConditionEditor } from "../editor/ConditionEditor";
 import { useEditorEnv } from "../editor/editorContext";
+import { WindowPicker } from "../editor/WindowPicker";
 import { RepeatFields, StepOwnFields } from "../editor/StepForm";
 import { portLabel, typeName } from "./blockText";
 import { NOTE_COLORS } from "./canvasContext";
@@ -28,6 +32,65 @@ interface BlockFieldsProps {
   onChange: (node: GraphNode) => void;
   disabled: boolean;
   scenarios: ReadonlyArray<ScenarioSummary>;
+}
+
+function FocusFields({
+  node,
+  disabled,
+  onChange,
+}: {
+  node: FocusNode;
+  disabled: boolean;
+  onChange: (node: FocusNode) => void;
+}) {
+  const { t } = useT();
+  const [picking, setPicking] = useState(false);
+  const target = node.target;
+  const setTarget = (patch: Partial<WindowTarget>) => onChange({ ...node, target: { ...target, ...patch } });
+  const matchOptions: Array<Option<WindowTarget["titleMatch"]>> = [
+    { value: "contains", label: t("editor.titleContains") },
+    { value: "exact", label: t("editor.titleExact") },
+  ];
+  return (
+    <>
+      <p className="field-hint">{t("canvas.inspector.focusHint")}</p>
+      <Field label={t("editor.targetTitle")}>
+        <TextInput
+          className="inspector-wide"
+          value={target.title}
+          disabled={disabled}
+          onChange={(title) => setTarget({ title })}
+        />
+        <Select
+          value={target.titleMatch}
+          options={matchOptions}
+          disabled={disabled}
+          onChange={(titleMatch) => setTarget({ titleMatch })}
+        />
+      </Field>
+      <Field label={t("editor.targetProcess")} hint={t("editor.targetProcessHint")}>
+        <TextInput
+          className="inspector-wide"
+          value={target.process}
+          spellCheck={false}
+          disabled={disabled}
+          onChange={(process) => setTarget({ process })}
+        />
+        <Button disabled={disabled} onClick={() => setPicking(true)}>
+          {t("editor.pickWindow")}
+        </Button>
+      </Field>
+      {picking ? (
+        <WindowPicker
+          onClose={() => setPicking(false)}
+          onPick={(window) => {
+            setTarget({ title: window.title, process: window.process });
+            setPicking(false);
+          }}
+        />
+      ) : null}
+    </>
+  );
 }
 
 /** The fields that belong to the type of the block. */
@@ -86,6 +149,40 @@ function BlockFields({ node, onChange, disabled, scenarios }: BlockFieldsProps) 
         />
       );
     }
+    case "while":
+      return (
+        <>
+          <Field label={t("canvas.inspector.whileModeLabel")}>
+            <Segmented<"while" | "until">
+              value={node.until ? "until" : "while"}
+              disabled={disabled}
+              options={[
+                { value: "while", label: t("canvas.inspector.whileMode") },
+                { value: "until", label: t("canvas.inspector.untilMode") },
+              ]}
+              onChange={(mode) => onChange({ ...node, until: mode === "until" })}
+            />
+          </Field>
+          <p className="field-hint">{t("canvas.inspector.whileHint")}</p>
+          <ConditionEditor
+            value={node.condition}
+            mode={env.mode}
+            target={env.target}
+            scenarioId={env.scenarioId}
+            disabled={disabled}
+            onChange={(condition) => onChange({ ...node, condition })}
+          />
+          <Field label={t("canvas.inspector.counterPause")}>
+            <PauseInput
+              value={node.pauseBetween}
+              disabled={disabled}
+              onChange={(pauseBetween) => onChange({ ...node, pauseBetween })}
+            />
+          </Field>
+        </>
+      );
+    case "focus":
+      return <FocusFields node={node} disabled={disabled} onChange={onChange} />;
     case "counter":
       return (
         <>

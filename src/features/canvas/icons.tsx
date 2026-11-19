@@ -57,6 +57,20 @@ const SHAPES: Record<NodeType, ReactNode> = {
       <path d="M13.5 2v3h-3" />
     </>
   ),
+  while: (
+    <>
+      <path d="M13 8a5 5 0 1 1-1.6-3.7" />
+      <path d="M13.5 2v3h-3" />
+      <path d="M8 6.2v2.2l1.6 1" />
+    </>
+  ),
+  focus: (
+    <>
+      <rect x="1.5" y="3" width="9" height="7" rx="1" />
+      <path d="M6 5.2h3M8.2 3.8v3" />
+      <path d="m10 10 4 3M14 10v3h-3" />
+    </>
+  ),
   call: (
     <>
       <rect x="2" y="2.5" width="8" height="8" rx="1" />

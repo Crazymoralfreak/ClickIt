@@ -1197,6 +1197,28 @@ impl<'a> Runner<'a> {
             }
             Condition::Window { title, title_match } => Ok(plain(target::window_exists(title, *title_match))),
             Condition::Process { name } => Ok(plain(target::process_running(name))),
+            Condition::All { items } => {
+                let mut hit = None;
+                for item in items {
+                    match self.check(item)? {
+                        Some(found) => {
+                            if found.center.is_some() || hit.is_none() {
+                                hit = Some(found);
+                            }
+                        }
+                        None => return Ok(None),
+                    }
+                }
+                Ok(if items.is_empty() { None } else { hit })
+            }
+            Condition::Any { items } => {
+                for item in items {
+                    if let Some(hit) = self.check(item)? {
+                        return Ok(Some(hit));
+                    }
+                }
+                Ok(None)
+            }
         }
     }
 
@@ -1479,6 +1501,34 @@ impl<'a> Runner<'a> {
                 self.trace_phase(Phase::Check, limit(*timeout_ms));
                 let hit = self.wait_condition(condition, *poll_ms, *timeout_ms, true)?;
                 Ok(if hit.is_some() { Port::Yes } else { Port::No })
+            }
+            NodeKind::While { condition, until, pause_between } => {
+                self.trace_phase(Phase::Check, None);
+                let go = self.check(condition)?.is_some() != *until;
+                if go {
+                    let passed = counters.get(&index).copied().unwrap_or(0);
+                    if passed > 0 {
+                        self.pause_for(*pause_between)?;
+                    }
+                    counters.insert(index, passed + 1);
+                    Ok(Port::Body)
+                } else {
+                    counters.remove(&index);
+                    Ok(Port::Done)
+                }
+            }
+            NodeKind::Focus { target } => {
+                self.trace_phase(Phase::Action, None);
+                let hwnd = target::find_target(target).ok_or_else(|| {
+                    Halt::Fail(
+                        AppError::new("targetNotFound")
+                            .with("target", target::describe_target(target))
+                            .with("step", self.label()),
+                    )
+                })?;
+                target::request_focus(hwnd);
+                self.worked();
+                Ok(Port::Next)
             }
             NodeKind::Counter { times, pause_between } => {
                 let passed = counters.get(&index).copied().unwrap_or(0);
@@ -1958,6 +2008,113 @@ mod tests {
 
     fn passes(trace: &RunTrace, id: &str) -> u64 {
         trace.node_passes.get(id).copied().unwrap_or(0)
+    }
+
+    #[test]
+    fn a_while_block_runs_its_body_until_the_condition_fails() {
+        let bench = Bench::new();
+        let scenario = canvas(
+            "until-stop",
+            vec![
+                node("s", NodeKind::Start),
+                node(
+                    "w",
+                    NodeKind::While {
+                        condition: named("go"),
+                        until: false,
+                        pause_between: Pause::default(),
+                    },
+                ),
+                tick("body"),
+                tick("after"),
+            ],
+            vec![
+                edge("s", Port::Next, "w"),
+                edge("w", Port::Body, "body"),
+                edge("body", Port::Next, "w"),
+                edge("w", Port::Done, "after"),
+            ],
+        );
+        let mut left = 2;
+        let mut options = options();
+        options.probe = Some(Box::new(move |condition| match condition {
+            Condition::Process { name } if name == "go" => {
+                let holds = left > 0;
+                left -= 1;
+                Some(holds)
+            }
+            _ => Some(false),
+        }));
+        let finished = bench.run(scenario, vec![], options);
+        assert_eq!(finished.outcome, Outcome::Completed);
+        let trace = bench.trace("until-stop");
+        assert_eq!(passes(&trace, "body"), 2);
+        assert_eq!(passes(&trace, "w"), 3);
+        assert_eq!(trace.outcomes.get("w"), Some(&Port::Done));
+        assert_eq!(passes(&trace, "after"), 1);
+    }
+
+    #[test]
+    fn an_until_block_leaves_when_the_condition_starts_holding() {
+        let bench = Bench::new();
+        let scenario = canvas(
+            "until-hold",
+            vec![
+                node("s", NodeKind::Start),
+                node(
+                    "w",
+                    NodeKind::While { condition: named("go"), until: true, pause_between: Pause::default() },
+                ),
+                tick("body"),
+                tick("after"),
+            ],
+            vec![
+                edge("s", Port::Next, "w"),
+                edge("w", Port::Body, "body"),
+                edge("body", Port::Next, "w"),
+                edge("w", Port::Done, "after"),
+            ],
+        );
+        let finished = bench.run(scenario, vec![], probed(|_| true));
+        assert_eq!(finished.outcome, Outcome::Completed);
+        let trace = bench.trace("until-hold");
+        assert_eq!(passes(&trace, "body"), 0);
+        assert_eq!(passes(&trace, "after"), 1);
+        assert_eq!(trace.outcomes.get("w"), Some(&Port::Done));
+    }
+
+    #[test]
+    fn an_and_does_not_look_at_the_second_check_when_the_first_fails() {
+        let bench = Bench::new();
+        let scenario = canvas(
+            "both",
+            vec![
+                node("s", NodeKind::Start),
+                node(
+                    "b",
+                    NodeKind::Branch {
+                        condition: Condition::All { items: vec![named("first"), named("second")] },
+                        poll_ms: 5,
+                        timeout_ms: 0,
+                    },
+                ),
+                tick("yes"),
+            ],
+            vec![edge("s", Port::Next, "b"), edge("b", Port::Yes, "yes"), edge("b", Port::No, "yes")],
+        );
+        let looked = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = std::sync::Arc::clone(&looked);
+        let mut options = options();
+        options.probe = Some(Box::new(move |condition| match condition {
+            Condition::Process { name } => {
+                seen.lock().unwrap().push(name.clone());
+                Some(false)
+            }
+            Condition::All { .. } | Condition::Any { .. } => None,
+            _ => Some(false),
+        }));
+        bench.run(scenario, vec![], options);
+        assert_eq!(looked.lock().unwrap().as_slice(), ["first"]);
     }
 
     #[test]

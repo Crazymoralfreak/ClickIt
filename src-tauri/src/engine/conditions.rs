@@ -89,6 +89,7 @@ pub fn needs_screen(condition: &Condition) -> bool {
     match condition {
         Condition::Pixel { .. } | Condition::ImageFound { .. } | Condition::ImageGone { .. } => true,
         Condition::Window { .. } | Condition::Process { .. } => false,
+        Condition::All { items } | Condition::Any { items } => items.iter().any(needs_screen),
     }
 }
 
@@ -146,6 +147,30 @@ pub fn check_now(mode: ScenarioMode, window: &WindowTarget, condition: &Conditio
         }
         Condition::Window { title, title_match } => result.holds = target::window_exists(title, *title_match),
         Condition::Process { name } => result.holds = target::process_running(name),
+        Condition::All { items } | Condition::Any { items } => {
+            let all = matches!(condition, Condition::All { .. });
+            let mut holds = all;
+            for item in items {
+                if all != holds {
+                    break;
+                }
+                let part = check_now(mode, window, item, dir)?;
+                holds = part.holds;
+                if part.found.is_some() {
+                    result.found = part.found;
+                    result.x = part.x;
+                    result.y = part.y;
+                    result.client_x = part.client_x;
+                    result.client_y = part.client_y;
+                    result.score = part.score;
+                    result.would_match_at = part.would_match_at;
+                }
+                if part.color.is_some() {
+                    result.color = part.color;
+                }
+            }
+            result.holds = holds && !items.is_empty();
+        }
     }
     result.ms = started.elapsed().as_millis() as u64;
     Ok(result)

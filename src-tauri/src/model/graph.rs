@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::scenario::{
     new_id, ClickAction, Condition, KeyAction, LoopMode, Modifiers, MouseButton, OnFound, OnTimeout, Pause, Position,
-    Repeat, ScrollDirection, Step, StepKind,
+    Repeat, ScrollDirection, Step, StepKind, WindowTarget,
 };
 
 /// Written into a scenario that holds a graph. Lists keep version 1.
@@ -18,9 +18,6 @@ pub const MAX_INTERCEPTS: usize = 8;
 pub const MAX_CALL_DEPTH: usize = 8;
 pub const DEFAULT_INTERCEPT_MS: i64 = 2000;
 pub const MIN_INTERCEPT_MS: i64 = 500;
-/// Poll interval given to conditions that a list checked without one.
-const DEFAULT_POLL_MS: i64 = 200;
-
 /// Distance between blocks placed by the automatic layout.
 const COLUMN: f64 = 280.0;
 const ROW: f64 = 140.0;
@@ -114,6 +111,20 @@ pub enum NodeKind {
         #[serde(default)]
         pause_between: Pause,
     },
+    /// Checked once on entry. `until` sends the pass into `body` while the
+    /// condition does not hold. Link the end of the body back here.
+    While {
+        condition: Condition,
+        #[serde(default)]
+        until: bool,
+        #[serde(default)]
+        pause_between: Pause,
+    },
+    /// Brings a window to the front. The run fails when it is not there.
+    Focus {
+        #[serde(default)]
+        target: WindowTarget,
+    },
     /// Runs one pass of another scenario.
     Call {
         #[serde(default)]
@@ -137,7 +148,7 @@ impl NodeKind {
         match self {
             NodeKind::Wait { .. } => &[Port::Next, Port::Timeout],
             NodeKind::Branch { .. } => &[Port::Yes, Port::No],
-            NodeKind::Counter { .. } => &[Port::Body, Port::Done],
+            NodeKind::Counter { .. } | NodeKind::While { .. } => &[Port::Body, Port::Done],
             NodeKind::Stop => &[],
             NodeKind::Start
             | NodeKind::Click { .. }
@@ -147,6 +158,7 @@ impl NodeKind {
             | NodeKind::Key { .. }
             | NodeKind::Text { .. }
             | NodeKind::Pause { .. }
+            | NodeKind::Focus { .. }
             | NodeKind::Call { .. }
             | NodeKind::Intercept { .. } => &[Port::Next],
         }
@@ -156,7 +168,7 @@ impl NodeKind {
     pub fn skip_port(&self) -> Port {
         match self {
             NodeKind::Branch { .. } => Port::No,
-            NodeKind::Counter { .. } => Port::Done,
+            NodeKind::Counter { .. } | NodeKind::While { .. } => Port::Done,
             _ => Port::Next,
         }
     }
@@ -181,6 +193,8 @@ impl NodeKind {
             | NodeKind::Wait { .. }
             | NodeKind::Branch { .. }
             | NodeKind::Counter { .. }
+            | NodeKind::While { .. }
+            | NodeKind::Focus { .. }
             | NodeKind::Call { .. }
             | NodeKind::Intercept { .. } => return None,
         })
@@ -190,6 +204,7 @@ impl NodeKind {
         match self {
             NodeKind::Wait { condition, .. }
             | NodeKind::Branch { condition, .. }
+            | NodeKind::While { condition, .. }
             | NodeKind::Intercept { condition, .. } => Some(condition),
             _ => None,
         }
@@ -448,12 +463,8 @@ impl Graph {
 
     pub fn collect_templates(&self, out: &mut Vec<String>) {
         for node in &self.nodes {
-            let name = match node.kind.condition() {
-                Some(Condition::ImageFound { template, .. }) | Some(Condition::ImageGone { template, .. }) => template,
-                _ => continue,
-            };
-            if !name.is_empty() {
-                out.push(name.clone());
+            if let Some(condition) = node.kind.condition() {
+                condition.collect_templates(out);
             }
         }
     }
@@ -843,21 +854,16 @@ impl Builder {
                 Piece { entry: Some(id), open: left }
             }
             StepKind::Loop { mode: LoopMode::While { condition }, pause_between, steps } => {
-                let id = self.add(named(NodeKind::Branch {
+                let id = self.add(named(NodeKind::While {
                     condition: condition.clone(),
-                    poll_ms: DEFAULT_POLL_MS,
-                    timeout_ms: 0,
+                    until: false,
+                    pause_between: *pause_between,
                 }));
                 self.link(&mut open, &id);
                 let mut left = Vec::new();
-                let mut body = self.chain(steps, vec![(id.clone(), Port::Yes)], &mut left).open;
-                if !pause_between.is_zero() && !body.is_empty() {
-                    let pause = self.pause_node(*pause_between);
-                    self.link(&mut body, &pause);
-                    body.push((pause, Port::Next));
-                }
+                let mut body = self.chain(steps, vec![(id.clone(), Port::Body)], &mut left).open;
                 self.link(&mut body, &id);
-                left.insert(0, (id.clone(), Port::No));
+                left.insert(0, (id.clone(), Port::Done));
                 Piece { entry: Some(id), open: left }
             }
             StepKind::Loop { mode: LoopMode::Forever, pause_between, steps } => {
@@ -905,7 +911,7 @@ impl Builder {
 /// Turns a list of steps into a graph that runs the same way.
 ///
 /// "If" becomes a condition block, "Repeat N times" a counter, "While" a
-/// condition with a link back, "Forever" a link back, "Exit loop" a link to
+/// "while" block with a link back, "Forever" a link back, "Exit loop" a link to
 /// what follows the loop.
 pub fn from_steps(steps: &[Step]) -> Graph {
     let start = Node::new(NodeKind::Start);
@@ -1052,12 +1058,12 @@ mod tests {
     }
 
     #[test]
-    fn a_while_loop_becomes_a_condition_with_a_link_back() {
+    fn a_while_loop_becomes_a_while_block_with_a_link_back() {
         let graph = from_steps(&[looped(LoopMode::While { condition: process("a.exe") }, vec![click()]), click()]);
-        let Follow::To(branch) = walk(&graph, &[Port::Next]) else { panic!() };
-        assert!(matches!(graph.nodes[branch].kind, NodeKind::Branch { timeout_ms: 0, .. }));
-        assert_eq!(walk(&graph, &[Port::Next, Port::Yes, Port::Next]), Follow::To(branch));
-        assert!(matches!(walk(&graph, &[Port::Next, Port::No]), Follow::To(_)));
+        let Follow::To(gate) = walk(&graph, &[Port::Next]) else { panic!() };
+        assert!(matches!(graph.nodes[gate].kind, NodeKind::While { until: false, .. }));
+        assert_eq!(walk(&graph, &[Port::Next, Port::Body, Port::Next]), Follow::To(gate));
+        assert!(matches!(walk(&graph, &[Port::Next, Port::Done]), Follow::To(_)));
     }
 
     #[test]

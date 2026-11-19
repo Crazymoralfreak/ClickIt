@@ -151,6 +151,17 @@ impl Checker<'_> {
                     self.error(Some(id), "processEmpty");
                 }
             }
+            Condition::All { items } | Condition::Any { items } => {
+                if items.len() != 2 {
+                    self.error(Some(id), "conditionItems");
+                }
+                if condition.compound_depth() > crate::model::scenario::MAX_CONDITION_DEPTH {
+                    self.error(Some(id), "conditionDepth");
+                }
+                for item in items {
+                    self.condition(id, item);
+                }
+            }
         }
     }
 
@@ -302,6 +313,15 @@ impl Checker<'_> {
                     self.error(Some(id), "loopTimesRange");
                 }
                 self.pause(Some(id), pause_between);
+            }
+            NodeKind::While { condition, pause_between, .. } => {
+                self.condition(id, condition);
+                self.pause(Some(id), pause_between);
+            }
+            NodeKind::Focus { target } => {
+                if target.is_empty() {
+                    self.error(Some(id), "focusEmpty");
+                }
             }
             NodeKind::Intercept { condition, min_interval_ms } => {
                 self.condition(id, condition);
@@ -848,5 +868,46 @@ mod tests {
         assert_eq!(found(&chain[0], &lookup), vec![issue("b", "callTooDeep")]);
         // Eight levels below the caller are fine.
         assert!(found(&chain[2], &lookup).is_empty());
+    }
+
+    #[test]
+    fn a_focus_needs_a_window_and_a_compound_condition_needs_two_items() {
+        let focus = canvas(
+            vec![node("a", NodeKind::Start), node("f", NodeKind::Focus { target: WindowTarget::default() })],
+            vec![edge("a", Port::Next, "f")],
+        );
+        assert!(codes(&focus).iter().any(|code| code == "focusEmpty"));
+
+        let short = canvas(
+            vec![
+                node("a", NodeKind::Start),
+                node(
+                    "w",
+                    NodeKind::While {
+                        condition: Condition::Any { items: vec![process("a.exe")] },
+                        until: true,
+                        pause_between: Pause::default(),
+                    },
+                ),
+            ],
+            vec![edge("a", Port::Next, "w")],
+        );
+        assert!(codes(&short).iter().any(|code| code == "conditionItems"));
+
+        let mut deep = process("a.exe");
+        for _ in 0..5 {
+            deep = Condition::All { items: vec![deep, process("b.exe")] };
+        }
+        let nested = canvas(
+            vec![
+                node("a", NodeKind::Start),
+                node(
+                    "w",
+                    NodeKind::While { condition: deep, until: false, pause_between: Pause::default() },
+                ),
+            ],
+            vec![edge("a", Port::Next, "w")],
+        );
+        assert!(codes(&nested).iter().any(|code| code == "conditionDepth"));
     }
 }

@@ -35,6 +35,7 @@ import { CanvasContext, type CanvasApi, type CanvasEdge, type CanvasNode } from 
 import { FlowEdge } from "./FlowEdge";
 import {
   analyse,
+  alignBend,
   arrange,
   blockCount,
   canConnect,
@@ -660,17 +661,18 @@ function CanvasBody({
     if (locked || !edge.data?.editable || key === undefined || !stored || !from || !to) {
       return;
     }
-    const at = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    const raw = flow.screenToFlowPosition({ x: event.clientX, y: event.clientY });
     const down = portsOf(from.type).indexOf(stored.port) === 0;
     const start = down
       ? { x: (from.x ?? 0) + BLOCK_WIDTH / 2, y: (from.y ?? 0) + BLOCK_HEIGHT }
       : { x: (from.x ?? 0) + BLOCK_WIDTH, y: (from.y ?? 0) + BLOCK_HEIGHT / 2 };
     const end = { x: (to.x ?? 0) + BLOCK_WIDTH / 2, y: to.y ?? 0 };
     const chain = [start, ...stored.points, end];
+    const at = alignBend(raw, chain, flow.getZoom());
     let nearest = 0;
     let best = Number.POSITIVE_INFINITY;
     for (let index = 0; index + 1 < chain.length; index += 1) {
-      const distance = distanceToSegment(at, chain[index], chain[index + 1]);
+      const distance = distanceToSegment(raw, chain[index], chain[index + 1]);
       if (distance < best) {
         best = distance;
         nearest = index;

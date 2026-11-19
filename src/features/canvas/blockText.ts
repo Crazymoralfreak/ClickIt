@@ -1,7 +1,7 @@
 // Names, one-line descriptions and output labels of the blocks.
 
 import type { TKey, Translator } from "../../i18n";
-import type { GraphNode, NodeType, Port, Step } from "../../types/scenario";
+import type { Condition, GraphNode, NodeType, Port, Step } from "../../types/scenario";
 import { conditionSummary, stepSummary } from "../editor/summary";
 import type { Role } from "./graph";
 
@@ -18,6 +18,8 @@ const TYPE_KEYS: Record<NodeType, TKey> = {
   wait: "steps.types.wait",
   branch: "canvas.types.branch",
   counter: "canvas.types.counter",
+  while: "canvas.types.while",
+  focus: "canvas.types.focus",
   call: "canvas.types.call",
   intercept: "canvas.types.intercept",
 };
@@ -98,6 +100,16 @@ export function blockSummary(node: GraphNode, translator: Translator, scenarioNa
       return t("canvas.summary.branch", { condition: conditionSummary(node.condition, translator) });
     case "counter":
       return t("canvas.summary.counter", { times: node.times });
+    case "while":
+      return t(node.until ? "canvas.summary.whileUntil" : "canvas.summary.while", {
+        condition: conditionSummary(node.condition, translator),
+      });
+    case "focus": {
+      const title = node.target.title.trim();
+      const process = node.target.process.trim();
+      const name = title !== "" ? title : process;
+      return name === "" ? t("canvas.summary.focusEmpty") : t("canvas.summary.focus", { name });
+    }
     case "call": {
       if (node.scenarioId === "") {
         return t("canvas.summary.callNone");
@@ -114,14 +126,25 @@ export function blockSummary(node: GraphNode, translator: Translator, scenarioNa
   }
 }
 
+function templateOf(condition: Condition): string | null {
+  if (condition.kind === "imageFound" || condition.kind === "imageGone") {
+    return condition.template === "" ? null : condition.template;
+  }
+  if (condition.kind === "all" || condition.kind === "any") {
+    for (const item of condition.items) {
+      const found = templateOf(item);
+      if (found !== null) {
+        return found;
+      }
+    }
+  }
+  return null;
+}
+
 /** File name of the template image a block looks for, if it has one. */
 export function blockTemplate(node: GraphNode): string | null {
-  if (node.type !== "wait" && node.type !== "branch" && node.type !== "intercept") {
+  if (node.type !== "wait" && node.type !== "branch" && node.type !== "while" && node.type !== "intercept") {
     return null;
   }
-  const condition = node.condition;
-  if (condition.kind !== "imageFound" && condition.kind !== "imageGone") {
-    return null;
-  }
-  return condition.template === "" ? null : condition.template;
+  return templateOf(node.condition);
 }

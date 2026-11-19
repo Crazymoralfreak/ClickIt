@@ -672,15 +672,21 @@
   }
 }
 
+/* Above the edge pictures: each link is its own layer and would take the click. */
+.canvas-flow .react-flow__edgelabel-renderer {
+  z-index: 1001;
+}
+
 .flow-bend {
   position: absolute;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   border: 2px solid var(--surface);
   border-radius: 50%;
   background: var(--accent);
   cursor: move;
   pointer-events: all;
+  touch-action: none;
 }
 
 /* Notes and frames */

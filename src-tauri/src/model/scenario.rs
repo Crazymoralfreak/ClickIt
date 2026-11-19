@@ -4,6 +4,8 @@ use super::graph::{Graph, GRAPH_VERSION};
 
 /// Steps stored in one scenario file, nested ones included.
 pub const MAX_STEPS: usize = 500;
+/// How many "and" / "or" conditions may wrap each other.
+pub const MAX_CONDITION_DEPTH: usize = 4;
 /// Shared nesting limit for "If" and "Loop" blocks.
 pub const MAX_DEPTH: usize = 3;
 pub const MAX_STEP_REPEAT: i64 = 10_000;
@@ -148,6 +150,39 @@ pub enum Condition {
     ImageGone { template: String, area: Area, threshold: f64 },
     Window { title: String, title_match: TitleMatch },
     Process { name: String },
+    /// Both hold. Later items are not looked at once one does not.
+    All { items: Vec<Condition> },
+    /// One of them holds. Later items are not looked at once one does.
+    Any { items: Vec<Condition> },
+}
+
+impl Condition {
+    /// How many compound conditions wrap the deepest item. A plain condition is 0.
+    pub fn compound_depth(&self) -> usize {
+        match self {
+            Condition::All { items } | Condition::Any { items } => {
+                1 + items.iter().map(Condition::compound_depth).max().unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+
+    /// Template file names this condition looks for, compounds included.
+    pub fn collect_templates(&self, out: &mut Vec<String>) {
+        match self {
+            Condition::ImageFound { template, .. } | Condition::ImageGone { template, .. } => {
+                if !template.is_empty() {
+                    out.push(template.clone());
+                }
+            }
+            Condition::All { items } | Condition::Any { items } => {
+                for item in items {
+                    item.collect_templates(out);
+                }
+            }
+            Condition::Pixel { .. } | Condition::Window { .. } | Condition::Process { .. } => {}
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -432,13 +467,6 @@ pub fn count_steps(steps: &[Step]) -> usize {
         .sum()
 }
 
-fn condition_template(condition: &Condition) -> Option<&str> {
-    match condition {
-        Condition::ImageFound { template, .. } | Condition::ImageGone { template, .. } => Some(template),
-        Condition::Pixel { .. } | Condition::Window { .. } | Condition::Process { .. } => None,
-    }
-}
-
 fn collect_templates(steps: &[Step], out: &mut Vec<String>) {
     for step in steps {
         let condition = match &step.kind {
@@ -446,10 +474,8 @@ fn collect_templates(steps: &[Step], out: &mut Vec<String>) {
             StepKind::Loop { mode: LoopMode::While { condition }, .. } => Some(condition),
             _ => None,
         };
-        if let Some(name) = condition.and_then(condition_template) {
-            if !name.is_empty() {
-                out.push(name.to_string());
-            }
+        if let Some(condition) = condition {
+            condition.collect_templates(out);
         }
         for list in step.children() {
             collect_templates(list, out);

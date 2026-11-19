@@ -50,6 +50,8 @@ const ROLES: Record<NodeType, Role> = {
   branch: "check",
   pause: "control",
   counter: "control",
+  while: "control",
+  focus: "action",
   call: "control",
   stop: "control",
 };
@@ -66,18 +68,20 @@ const PORTS: Record<NodeType, ReadonlyArray<Port>> = {
   key: SINGLE,
   text: SINGLE,
   pause: SINGLE,
+  focus: SINGLE,
   call: SINGLE,
   stop: [],
   wait: ["next", "timeout"],
   branch: ["yes", "no"],
   counter: ["body", "done"],
+  while: ["body", "done"],
 };
 
 /** Order of the list of blocks, grouped by role. */
 export const PALETTE: ReadonlyArray<{ role: Role; types: ReadonlyArray<NodeType> }> = [
-  { role: "action", types: ["click", "move", "drag", "scroll", "key", "text"] },
+  { role: "action", types: ["click", "move", "drag", "scroll", "key", "text", "focus"] },
   { role: "check", types: ["wait", "branch"] },
-  { role: "control", types: ["pause", "counter", "call", "stop"] },
+  { role: "control", types: ["pause", "counter", "while", "call", "stop"] },
   { role: "entry", types: ["intercept"] },
 ];
 
@@ -122,6 +126,31 @@ export function snap(value: number): number {
   return Math.round(value / GRID) * GRID;
 }
 
+/**
+ * A bend point follows the pointer, and takes the row or the column of a neighbour
+ * when the pointer is close to it. The link can then stay straight.
+ */
+export function alignBend(raw: GraphPoint, anchors: readonly GraphPoint[], zoom: number): GraphPoint {
+  const reach = 14 / Math.max(zoom, 0.2);
+  let x = raw.x;
+  let y = raw.y;
+  let bestX = Number.POSITIVE_INFINITY;
+  let bestY = Number.POSITIVE_INFINITY;
+  for (const anchor of anchors) {
+    const dx = Math.abs(raw.x - anchor.x);
+    const dy = Math.abs(raw.y - anchor.y);
+    if (dx <= reach && dx < bestX) {
+      bestX = dx;
+      x = anchor.x;
+    }
+    if (dy <= reach && dy < bestY) {
+      bestY = dy;
+      y = anchor.y;
+    }
+  }
+  return { x: Math.round(x), y: Math.round(y) };
+}
+
 export function createNode(type: NodeType, mode: ScenarioMode, at: GraphPoint): GraphNode {
   const base = { id: newId("n"), enabled: true, pauseAfter: noPause(), x: at.x, y: at.y };
   switch (type) {
@@ -154,6 +183,10 @@ export function createNode(type: NodeType, mode: ScenarioMode, at: GraphPoint): 
       return { ...base, type, condition: defaultCondition("imageFound", mode), pollMs: DEFAULT_POLL_MS, timeoutMs: 0 };
     case "counter":
       return { ...base, type, times: 3, pauseBetween: noPause() };
+    case "while":
+      return { ...base, type, condition: defaultCondition("imageFound", mode), until: false, pauseBetween: noPause() };
+    case "focus":
+      return { ...base, type, target: { title: "", titleMatch: "contains", process: "" } };
     case "call":
       return { ...base, type, scenarioId: "" };
     case "intercept":

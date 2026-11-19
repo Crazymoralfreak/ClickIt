@@ -4,8 +4,8 @@ import { useApp } from "../../app/context";
 import { useT } from "../../i18n";
 import type { CheckResult } from "../../types/runtime";
 import type { Condition, ConditionKind, ScenarioMode, TitleMatch, WindowTarget } from "../../types/scenario";
-import { Button, Field, NumberInput, Select, TextInput, cx, type Option } from "../../ui";
-import { CONDITION_KINDS, switchCondition } from "./defaults";
+import { Button, Field, NumberInput, Segmented, Select, TextInput, cx, type Option } from "../../ui";
+import { CONDITION_KINDS, defaultCondition, switchCondition } from "./defaults";
 import { ImageConditionFields } from "./ImageConditionFields";
 import { PositionInput } from "./PositionInput";
 import { CONDITION_KIND_KEYS } from "./summary";
@@ -17,6 +17,8 @@ interface ConditionEditorProps {
   target: WindowTarget;
   scenarioId: string;
   disabled?: boolean;
+  /** A check inside "and" / "or". It stays one check and is not tried on its own. */
+  nested?: boolean;
 }
 
 const COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
@@ -93,8 +95,10 @@ function CheckNow({ value, mode, target, scenarioId }: CheckNowProps) {
   );
 }
 
-/** Condition of a "Wait", "If" or "Repeat while" step. */
-export function ConditionEditor({ value, onChange, mode, target, scenarioId, disabled }: ConditionEditorProps) {
+type ConditionShape = "one" | "all" | "any";
+
+/** Condition of a "Wait", "If", "While" or "Repeat while" step. */
+export function ConditionEditor({ value, onChange, mode, target, scenarioId, disabled, nested }: ConditionEditorProps) {
   const { t } = useT();
 
   const kindOptions: Array<Option<ConditionKind>> = CONDITION_KINDS.map((kind) => ({
@@ -192,6 +196,9 @@ export function ConditionEditor({ value, onChange, mode, target, scenarioId, dis
             />
           </Field>
         );
+      case "all":
+      case "any":
+        return null;
       default: {
         const unreachable: never = value;
         throw new Error(`Unknown condition: ${String(unreachable)}`);
@@ -199,8 +206,73 @@ export function ConditionEditor({ value, onChange, mode, target, scenarioId, dis
     }
   };
 
+  const shape: ConditionShape = value.kind === "all" || value.kind === "any" ? value.kind : "one";
+  const setShape = (next: ConditionShape) => {
+    if (next === shape) {
+      return;
+    }
+    if (next === "one") {
+      const first = value.kind === "all" || value.kind === "any" ? value.items[0] : undefined;
+      onChange(first !== undefined && first.kind !== "all" && first.kind !== "any" ? first : defaultCondition("imageFound", mode));
+      return;
+    }
+    if (value.kind === "all" || value.kind === "any") {
+      onChange({ ...value, kind: next });
+      return;
+    }
+    onChange({ kind: next, items: [value, defaultCondition("imageFound", mode)] });
+  };
+  const shapeField =
+    nested && shape === "one" ? null : (
+      <Field label={nested ? undefined : t("conditions.shape")} hint={nested ? undefined : t("conditions.shapeHint")}>
+        <Segmented<ConditionShape>
+          value={shape}
+          disabled={disabled}
+          options={[
+            { value: "one", label: t("conditions.shapeOne") },
+            { value: "all", label: t("conditions.shapeAll") },
+            { value: "any", label: t("conditions.shapeAny") },
+          ]}
+          onChange={setShape}
+        />
+      </Field>
+    );
+
+  if (value.kind === "all" || value.kind === "any") {
+    const kind = value.kind;
+    const first = value.items[0] ?? defaultCondition("imageFound", mode);
+    const second = value.items[1] ?? defaultCondition("imageFound", mode);
+    return (
+      <>
+        {shapeField}
+        <div className="condition-combine">
+          <ConditionEditor
+            nested
+            value={first}
+            mode={mode}
+            target={target}
+            scenarioId={scenarioId}
+            disabled={disabled}
+            onChange={(item) => onChange({ kind, items: [item, second] })}
+          />
+          <ConditionEditor
+            nested
+            value={second}
+            mode={mode}
+            target={target}
+            scenarioId={scenarioId}
+            disabled={disabled}
+            onChange={(item) => onChange({ kind, items: [first, item] })}
+          />
+        </div>
+        {nested ? null : <CheckNow value={value} mode={mode} target={target} scenarioId={scenarioId} />}
+      </>
+    );
+  }
+
   return (
     <>
+      {shapeField}
       <Field label={t("conditions.kind")}>
         <Select
           value={value.kind}
@@ -210,7 +282,7 @@ export function ConditionEditor({ value, onChange, mode, target, scenarioId, dis
         />
       </Field>
       {fields()}
-      <CheckNow value={value} mode={mode} target={target} scenarioId={scenarioId} />
+      {nested ? null : <CheckNow value={value} mode={mode} target={target} scenarioId={scenarioId} />}
     </>
   );
 }

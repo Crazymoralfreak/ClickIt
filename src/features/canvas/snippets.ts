@@ -4,11 +4,12 @@ import type { TKey } from "../../i18n";
 import type { NodeType, ScenarioMode } from "../../types/scenario";
 import { createNode, type Fragment } from "./graph";
 
-export type BuiltinSnippet = "waitClick" | "repeat" | "retry";
+export type BuiltinSnippet = "waitClick" | "repeat" | "retry" | "until";
 
 export const BUILTIN_SNIPPETS: ReadonlyArray<{ id: BuiltinSnippet; name: TKey }> = [
   { id: "waitClick", name: "canvas.palette.builtinWaitClick" },
   { id: "repeat", name: "canvas.palette.builtinRepeat" },
+  { id: "until", name: "canvas.palette.builtinUntil" },
   { id: "retry", name: "canvas.palette.builtinRetry" },
 ];
 
@@ -44,6 +45,20 @@ export function builtinFragment(id: BuiltinSnippet, mode: ScenarioMode): Fragmen
         edges: [
           { from: counter.id, port: "body", to: click.id, points: [] },
           { from: click.id, port: "next", to: counter.id, points: [] },
+        ],
+      };
+    }
+    case "until": {
+      const gate = createNode("while", mode, { x: 0, y: 0 });
+      const pause = createNode("pause", mode, { x: 0, y: ROW });
+      if (gate.type !== "while" || pause.type !== "pause") {
+        throw new Error("Not a while and a pause block");
+      }
+      return {
+        nodes: [{ ...gate, until: true, pauseBetween: { fromMs: 1000, toMs: 1000 } }, pause],
+        edges: [
+          { from: gate.id, port: "body", to: pause.id, points: [] },
+          { from: pause.id, port: "next", to: gate.id, points: [] },
         ],
       };
     }

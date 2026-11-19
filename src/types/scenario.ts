@@ -55,9 +55,14 @@ export type Condition =
   | { kind: "imageFound"; template: string; area: Area; threshold: number }
   | { kind: "imageGone"; template: string; area: Area; threshold: number }
   | { kind: "window"; title: string; titleMatch: TitleMatch }
-  | { kind: "process"; name: string };
+  | { kind: "process"; name: string }
+  /** Both items hold. The second is not looked at when the first does not. */
+  | { kind: "all"; items: Condition[] }
+  /** Either item holds. The second is not looked at when the first does. */
+  | { kind: "any"; items: Condition[] };
 
-export type ConditionKind = Condition["kind"];
+/** A condition that is one check. `all` and `any` combine two of these. */
+export type ConditionKind = Exclude<Condition["kind"], "all" | "any">;
 export type OnTimeout = "stop" | "continue";
 
 export type OnFound =
@@ -240,6 +245,20 @@ export interface CounterNode extends NodeBase {
   pauseBetween: Pause;
 }
 
+/** Checked once on entry. `until` sends the pass into `body` while the condition does not hold. */
+export interface WhileNode extends NodeBase {
+  type: "while";
+  condition: Condition;
+  until: boolean;
+  pauseBetween: Pause;
+}
+
+/** Brings a window to the front. The run fails when it is not there. */
+export interface FocusNode extends NodeBase {
+  type: "focus";
+  target: WindowTarget;
+}
+
 /** Runs one pass of another scenario. */
 export interface CallNode extends NodeBase {
   type: "call";
@@ -254,7 +273,16 @@ export interface InterceptNode extends NodeBase {
   minIntervalMs: number;
 }
 
-export type GraphNode = ActionNode | StartNode | WaitNode | BranchNode | CounterNode | CallNode | InterceptNode;
+export type GraphNode =
+  | ActionNode
+  | StartNode
+  | WaitNode
+  | BranchNode
+  | CounterNode
+  | WhileNode
+  | FocusNode
+  | CallNode
+  | InterceptNode;
 export type NodeType = GraphNode["type"];
 
 export interface GraphPoint {
