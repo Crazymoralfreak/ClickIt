@@ -93,10 +93,10 @@ impl Default for Settings {
 }
 
 impl Settings {
-    /// Language to show: the saved one, or English until it is chosen.
+    /// Language to show: the saved one when ClickIt knows it, otherwise English.
     pub fn lang(&self) -> &str {
         match self.language.as_deref() {
-            Some("ru") => "ru",
+            Some(language) if crate::shell::text::known_language(language) => language,
             _ => "en",
         }
     }

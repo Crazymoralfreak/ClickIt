@@ -468,7 +468,33 @@ export interface ScheduleRule {
   when: RuleWhen;
 }
 
-export type Language = "ru" | "en";
+export type Language =
+  | "ru"
+  | "en"
+  | "de"
+  | "es"
+  | "fr"
+  | "pt"
+  | "pl"
+  | "tr"
+  | "zh"
+  | "ja"
+  | "ko";
+
+/** Languages shown in the settings, in their own names. */
+export const LANGUAGES: { value: Language; label: string }[] = [
+  { value: "de", label: "Deutsch" },
+  { value: "en", label: "English" },
+  { value: "es", label: "Español" },
+  { value: "fr", label: "Français" },
+  { value: "ja", label: "日本語" },
+  { value: "ko", label: "한국어" },
+  { value: "pl", label: "Polski" },
+  { value: "pt", label: "Português" },
+  { value: "ru", label: "Русский" },
+  { value: "tr", label: "Türkçe" },
+  { value: "zh", label: "中文" },
+];
 
 export interface Settings {
   language: Language | null;

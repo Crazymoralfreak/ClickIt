@@ -85,7 +85,7 @@ export interface AppError {
 export interface AppInfo {
   version: string;
   dataDir: string;
-  /** Language picked from Windows: "ru" for a Russian UI, "en" otherwise. */
+  /** Language picked from Windows when ClickIt knows it, otherwise English. */
   systemLanguage: Language;
 }
 

@@ -716,8 +716,6 @@
   "settings": {
     "general": "Общие",
     "language": "Язык",
-    "languageRu": "Русский",
-    "languageEn": "English",
     "hotkeys": "Горячие клавиши",
     "hotkeyStartStop": "Старт и стоп",
     "hotkeyCapture": "Снятие точки и цвета",

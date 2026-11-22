@@ -716,8 +716,6 @@
   "settings": {
     "general": "General",
     "language": "Language",
-    "languageRu": "Русский",
-    "languageEn": "English",
     "hotkeys": "Hotkeys",
     "hotkeyStartStop": "Start and stop",
     "hotkeyCapture": "Point and colour capture",

@@ -100,7 +100,8 @@ type PluralForm = "one" | "few" | "many";
 
 function pluralForm(count: number, language: Language): PluralForm {
   switch (language) {
-    case "ru": {
+    case "ru":
+    case "pl": {
       const tens = Math.abs(count) % 100;
       const units = tens % 10;
       if (tens >= 11 && tens <= 14) {
@@ -112,7 +113,16 @@ function pluralForm(count: number, language: Language): PluralForm {
       return units >= 2 && units <= 4 ? "few" : "many";
     }
     case "en":
+    case "de":
+    case "es":
+    case "fr":
+    case "pt":
+    case "tr":
       return count === 1 ? "one" : "many";
+    case "zh":
+    case "ja":
+    case "ko":
+      return "many";
     default: {
       const unreachable: never = language;
       throw new Error(`Unknown language: ${String(unreachable)}`);

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api } from "../../api";
 import { useApp } from "../../app/context";
 import { useT } from "../../i18n";
-import { MAX_COUNTDOWN_SEC, type Language } from "../../types/scenario";
+import { LANGUAGES, MAX_COUNTDOWN_SEC, type Language } from "../../types/scenario";
 import { Button, Checkbox, Field, NumberInput, PageFrame, Section, Select, TextInput } from "../../ui";
 import { BlockedProcesses } from "./BlockedProcesses";
 import { DataCleanup } from "./DataCleanup";
@@ -127,10 +127,7 @@ export function SettingsPage() {
         <Field label={t("settings.language")}>
           <Select<Language>
             value={settings.language ?? info.systemLanguage}
-            options={[
-              { value: "ru", label: t("settings.languageRu") },
-              { value: "en", label: t("settings.languageEn") },
-            ]}
+            options={LANGUAGES}
             onChange={(language) => void saveSettings({ ...settings, language })}
           />
         </Field>

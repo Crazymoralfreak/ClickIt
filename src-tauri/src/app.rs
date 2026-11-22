@@ -154,16 +154,35 @@ pub(crate) fn with_core(app: &AppHandle, action: impl FnOnce(&Arc<Core>)) {
     }
 }
 
-/// "ru" for a Russian Windows interface, "en" for any other.
+/// Language of the Windows interface when ClickIt has a dictionary for it,
+/// English for any other.
 pub fn system_language() -> &'static str {
     const PRIMARY_LANGUAGE_MASK: u16 = 0x3FF;
+    // Primary language ids from WinNls.h.
+    const LANG_CHINESE: u16 = 0x04;
+    const LANG_GERMAN: u16 = 0x07;
+    const LANG_SPANISH: u16 = 0x0A;
+    const LANG_FRENCH: u16 = 0x0C;
+    const LANG_JAPANESE: u16 = 0x11;
+    const LANG_KOREAN: u16 = 0x12;
+    const LANG_POLISH: u16 = 0x15;
+    const LANG_PORTUGUESE: u16 = 0x16;
     const LANG_RUSSIAN: u16 = 0x19;
+    const LANG_TURKISH: u16 = 0x1F;
     // SAFETY: no preconditions.
-    let language = unsafe { GetUserDefaultUILanguage() };
-    if language & PRIMARY_LANGUAGE_MASK == LANG_RUSSIAN {
-        "ru"
-    } else {
-        "en"
+    let language = unsafe { GetUserDefaultUILanguage() } & PRIMARY_LANGUAGE_MASK;
+    match language {
+        LANG_CHINESE => "zh",
+        LANG_GERMAN => "de",
+        LANG_SPANISH => "es",
+        LANG_FRENCH => "fr",
+        LANG_JAPANESE => "ja",
+        LANG_KOREAN => "ko",
+        LANG_POLISH => "pl",
+        LANG_PORTUGUESE => "pt",
+        LANG_RUSSIAN => "ru",
+        LANG_TURKISH => "tr",
+        _ => "en",
     }
 }
 
@@ -381,7 +400,7 @@ impl Core {
     pub fn set_settings(&self, mut new: Settings) -> AppResult<Settings> {
         let old = self.settings();
         new.language = match new.language.as_deref() {
-            Some(language @ ("ru" | "en")) => Some(language.to_string()),
+            Some(language) if crate::shell::text::known_language(language) => Some(language.to_string()),
             _ => old.language.clone(),
         };
         new.countdown_sec = new.countdown_sec.min(MAX_COUNTDOWN_SEC);

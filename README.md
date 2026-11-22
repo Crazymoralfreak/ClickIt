@@ -1,44 +1,46 @@
 # ClickIt
 
-Автокликер для Windows. Сценарий собирается из шагов: клик, перемещение, перетаскивание, прокрутка, клавиша, ввод текста, пауза, ожидание условия, «Если / иначе» и блок «Повторять». Тот же сценарий можно собрать на канвасе: блоки соединяются связями, ветвления и циклы видны как на схеме. Сценарии можно записывать с мыши и клавиатуры, объединять в очереди и запускать по расписанию.
+[Русский](README.ru.md)
 
-Интерфейс на русском и английском. В приложении нет учётной записи и облака. В сеть оно обращается за обновлениями и, если вы сами написали помощнику, к адресу модели из настроек.
+An auto-clicker for Windows. A scenario is built from steps: click, move, drag, scroll, key, text input, pause, wait for a condition, "If / else" and a "Repeat" block. The same scenario can be built on the canvas: blocks are joined by links, so branches and loops look like a diagram. Scenarios can be recorded from the mouse and keyboard, combined into queues and run on a schedule.
 
-## Скачать
+The interface is available in German, English, Spanish, French, Japanese, Korean, Polish, Portuguese, Russian, Turkish and Simplified Chinese. The application has no account and no cloud. It uses the network for updates and, if you write to the assistant yourself, for the model address from the settings.
 
-Последняя версия лежит на странице [релизов](https://github.com/Crazymoralfreak/ClickIt/releases/latest):
+## Download
 
-- `ClickIt_<версия>_x64-setup.exe` — установщик. Ставит приложение текущему пользователю, права администратора не нужны. Рядом с программой ставит `clickit-mcp.exe`.
-- `ClickIt_<версия>_x64-portable.exe` — portable-версия, запускается без установки. При запуске кладёт `clickit-mcp.exe` в ту же папку.
+The latest version is on the [releases](https://github.com/Crazymoralfreak/ClickIt/releases/latest) page:
 
-Файлы не подписаны, поэтому Windows SmartScreen при первом запуске покажет предупреждение.
+- `ClickIt_<version>_x64-setup.exe` — the installer. It installs the application for the current user, no administrator rights needed. It puts `clickit-mcp.exe` next to the program.
+- `ClickIt_<version>_x64-portable.exe` — the portable version, runs without installation. On start it puts `clickit-mcp.exe` into the same folder.
 
-## Обновления
+The files are not signed, so Windows SmartScreen shows a warning on the first start.
 
-Установленная версия при запуске спрашивает у GitHub, вышла ли новая. Найденное обновление скачивается, его подпись проверяется, и оно устанавливается само, когда не идёт запуск или запись; после установки ClickIt запускается снова. Сценарии и настройки сохраняются.
+## Updates
 
-- Проверку выключает галочка «Проверять обновления при запуске» в настройках. Без неё ClickIt сам к GitHub не обращается. Запросы помощника к модели задаются отдельно.
-- Проверить вручную можно кнопкой «Проверить обновления» в разделе «О программе».
-- Portable-версия сама не обновляется: она только сообщает, что вышла новая версия.
-- Версия 0.1.0 обновляться не умеет. Поверх неё нужно один раз поставить новый установщик вручную.
+On start, the installed version asks GitHub whether a new version is out. A found update is downloaded, its signature is checked, and it installs by itself when no run or recording is in progress; after the installation ClickIt starts again. Scenarios and settings are kept.
 
-## Подключение помощника
+- The check is turned off with the "Check for updates at startup" box in the settings. Without it ClickIt does not contact GitHub on its own. The assistant's requests to the model are set separately.
+- You can check by hand with the "Check for updates" button in the "About" section.
+- The portable version does not update itself: it only reports that a new version is out.
+- Version 0.1.0 cannot update. A new installer has to be installed over it by hand, once.
 
-Сценарий можно собрать извне или со страницы «Помощник». Оба входа вызывают одни и те же действия: список и правка сценариев, преобразование списка в канвас, проверка условия, снимок экрана, цвет точки, шаблон, журнал, статус, запуск, след последнего запуска и остановка.
+## Connecting the assistant
 
-Внешний вход — программа `clickit-mcp`. Её запускает внешняя программа, которая говорит по MCP и приносит свою модель. ClickIt эту модель не вызывает. Программа передаёт запросы запущенному ClickIt по локальному каналу. Канал открыт, только пока в настройках, в блоке «Помощник», включено «Разрешить внешние подключения»; по умолчанию выключено. Пока ClickIt не запущен или галочка снята, инструмент отвечает ошибкой, а не молчит. Слова переписки остаются у внешней программы. Действия, которые ClickIt выполнил, видны на странице «Помощник» во вкладке «Подключения».
+A scenario can be built from outside or from the "Assistant" page. Both entrances call the same actions: list and edit scenarios, convert a list to a canvas, check a condition, take a screenshot, read a point's colour, template, journal, status, run, the trace of the last run and stop.
 
-`clickit-mcp.exe` не нужно скачивать отдельно. Установщик кладёт его в папку программы. Portable-версия записывает его рядом с собой при запуске. ClickIt файл настроек внешней программы сам не пишет. На странице «Помощник» уже собран текст для этой копии: путь к `clickit-mcp.exe` рядом с запущенным ClickIt, его можно скопировать и вставить вместо пустого `"mcpServers": {}`. Форма такая:
+The external entrance is the `clickit-mcp` program. It is started by an external program that speaks MCP and brings its own model. ClickIt does not call that model. The program passes requests to the running ClickIt over a local pipe. The pipe is open only while "Allow external connections" is on in the settings, in the "Assistant" block; it is off by default. While ClickIt is not running or the box is unticked, the tool answers with an error instead of staying silent. The words of the conversation stay with the external program. The actions ClickIt performed are shown on the "Assistant" page, on the "Connections" tab.
+
+`clickit-mcp.exe` does not need to be downloaded separately. The installer puts it into the program folder. The portable version writes it next to itself on start. ClickIt does not write the external program's settings file itself. The "Assistant" page already has the text for this copy: the path to `clickit-mcp.exe` next to the running ClickIt, which you can copy and paste in place of the empty `"mcpServers": {}`. The form is:
 
 ```json
 "mcpServers": {
   "clickit": {
-    "command": "путь к clickit-mcp.exe"
+    "command": "path to clickit-mcp.exe"
   }
 }
 ```
 
-Сценарий на канвасе помощник читает и сохраняет как граф. Инструмент `get_scenario` возвращает `format`: `list` или `canvas`. У канваса вместо `steps` есть `graph`:
+The assistant reads and saves a canvas scenario as a graph. The `get_scenario` tool returns `format`: `list` or `canvas`. A canvas has `graph` instead of `steps`:
 
 ```json
 "graph": {
@@ -47,7 +49,7 @@
     {
       "id": "w",
       "type": "wait",
-      "title": "Ждать кнопку",
+      "title": "Wait for the button",
       "condition": { "kind": "imageFound", "template": "tpl-button.png", "area": { "kind": "screen" }, "threshold": 0.9 },
       "pollMs": 200,
       "timeoutMs": 10000
@@ -55,7 +57,7 @@
     {
       "id": "c",
       "type": "click",
-      "title": "Нажать",
+      "title": "Click",
       "button": "left",
       "action": "click",
       "position": { "kind": "absolute", "x": 640, "y": 360 }
@@ -69,78 +71,78 @@
 }
 ```
 
-Остальные поля блока необязательны: `enabled`, `pauseAfter`, `repeat` и место на канвасе `x`, `y`. Блок без места ClickIt расставит сам. Типы блоков и их выходы инструмент `save_scenario` перечисляет в своём описании. С одного выхода идёт одна связь. Выход без связи заканчивает проход, выход `timeout` без связи останавливает сценарий со сбоем.
+The other block fields are optional: `enabled`, `pauseAfter`, `repeat` and the place on the canvas `x`, `y`. ClickIt places a block without a place by itself. The `save_scenario` tool lists the block types and their outputs in its description. One link leaves one output. An output without a link ends the pass; a `timeout` output without a link stops the scenario with a failure.
 
-Для канваса есть ещё четыре действия:
+The canvas has four more actions:
 
-- `convert_scenario` превращает список в граф, сам сценарий или его копию;
-- `check_condition` один раз смотрит на условие блока и ничего не нажимает;
-- `run_scenario` с `startNode` делает пробный проход с выбранного блока;
-- `get_trace` отдаёт след последнего запуска: сколько раз пройден каждый блок и связь и на каком блоке запуск закончился.
+- `convert_scenario` turns a list into a graph, in the scenario itself or in a copy;
+- `check_condition` looks at a block's condition once and clicks nothing;
+- `run_scenario` with `startNode` makes a trial pass from the chosen block;
+- `get_trace` returns the trace of the last run: how many times each block and link was passed and on which block the run ended.
 
-Правка помощника сразу видна на открытом канвасе: изменённые блоки на несколько секунд подсвечиваются, а сама правка отменяется через Ctrl+Z.
+The assistant's edit is visible at once on an open canvas: the changed blocks are highlighted for a few seconds, and the edit itself is undone with Ctrl+Z.
 
-Страница «Помощник» сама ведёт разговор с моделью по адресу в формате OpenAI. Разговоры разложены по чатам: вкладка на чат, «+» создаёт новый, крестик удаляет. В настройках есть заготовки адреса Ollama (`http://127.0.0.1:11434/v1`) и LM Studio (`http://127.0.0.1:1234/v1`), а также свой адрес и ключ для облачной модели. Пустой адрес означает, что страница в сеть не обращается. Запрос уходит только когда отправлено сообщение. Ключ хранится в `%AppData%\ClickIt\agent.key`, не в настройках и не в журнале. Снимки экрана и текст сценария уходят на этот адрес.
+The "Assistant" page itself holds a conversation with a model at an address in the OpenAI format. Conversations are split into chats: one tab per chat, "+" creates a new one, the cross deletes. The settings have presets for the Ollama address (`http://127.0.0.1:11434/v1`) and LM Studio (`http://127.0.0.1:1234/v1`), as well as your own address and key for a cloud model. An empty address means the page does not use the network. A request is sent only when a message is sent. The key is stored in `%AppData%\ClickIt\agent.key`, not in the settings and not in the journal. Screenshots and the scenario text go to this address.
 
-Галочка «Запускать сценарии без подтверждения» по умолчанию выключена и одна на оба входа. Пока она выключена, запуск ждёт ответа в окне ClickIt. Когда она включена, сценарий начинается без вопроса, после отсчёта, и приложение само нажимает клавиши. Остановка вопроса не задаёт.
+The "Start scenarios without confirmation" box is off by default and is shared by both entrances. While it is off, a start waits for an answer in the ClickIt window. When it is on, the scenario starts without a question, after the countdown, and the application presses keys by itself. Stopping asks no question.
 
-Сценарий с шагом «Команда» эта галочка не касается: его запуск всегда ждёт ответа, и в вопросе показан текст команд. Так же ждёт ответа сохранение сценария, в который помощник или внешняя программа добавили новую команду.
+This box does not apply to a scenario with a "Command" step: its start always waits for an answer, and the question shows the text of the commands. Saving a scenario to which the assistant or an external program added a new command waits for an answer in the same way.
 
-В этой версии через внешнее подключение нельзя менять очереди и расписание, записывать мышь и клавиатуру и удалять сценарии.
+In this version an external connection cannot change queues and the schedule, record the mouse and keyboard, or delete scenarios.
 
-## Что умеет
+## Features
 
-- Два режима сценария: «Весь экран» (абсолютные координаты, по умолчанию) и «Окно» (координаты внутри выбранного окна, пауза, пока на переднем плане другое окно).
-- Условия: цвет пикселя, изображение найдено или пропало, заголовок окна, запущенный процесс.
-- Повторы на четырёх уровнях: шаг, блок «Повторять», сценарий, очередь сценариев.
-- Канвас: сценарий как схема из блоков и связей, с запуском по шагам и следом последнего запуска. Подробнее в разделе «Канвас».
-- Расписание: разово, ежедневно, по дням недели, по интервалу.
-- Значок в трее, горячие клавиши старта и остановки, снятие точки, пауза записи и вырезание картинки во время записи; остановка курсором в левом верхнем углу.
-- Список «Не работать, пока запущено»: пока запущена программа из списка, сценарий не стартует, а идущий встаёт на паузу.
-- Экспорт и импорт сценария одним файлом `.clickit`.
-- Папки сценариев с вложенностью, перетаскивание сценариев и папок мышью, поиск по списку.
-- Шаг и блок «Команда»: запуск программы с аргументами или текста скрипта (cmd, PowerShell), с ожиданием конца и таймаутом. Запуск команд выключен, пока его не включат в настройках; перед импортом файла с командами ClickIt показывает их и спрашивает, добавлять ли сценарий.
+- Two scenario modes: "Whole screen" (absolute coordinates, the default) and "Window" (coordinates inside the chosen window, a pause while another window is in the foreground).
+- Conditions: pixel colour, image found or gone, window title, running process.
+- Repeats on four levels: step, "Repeat" block, scenario, scenario queue.
+- Canvas: a scenario as a diagram of blocks and links, with step-by-step runs and the trace of the last run. More in the "Canvas" section.
+- Schedule: once, daily, on days of the week, at an interval.
+- Tray icon, hotkeys for start and stop, point capture, pausing the recording and cutting an image while recording; stopping by moving the cursor to the top-left corner.
+- The "Do not run while running" list: while a program from the list is running, a scenario does not start and a running one pauses.
+- Export and import of a scenario as a single `.clickit` file.
+- Scenario folders with nesting, dragging scenarios and folders with the mouse, search in the list.
+- The "Command" step and block: starting a program with arguments or the text of a script (cmd, PowerShell), with waiting for the end and a timeout. Running commands is off until it is switched on in the settings; before importing a file with commands, ClickIt shows them and asks whether to add the scenario.
 
-## Канвас
+## Canvas
 
-Сценарий хранится в одном из двух видов: список шагов или канвас. Вид выбирается при создании. Готовый список открывается на канвасе кнопкой «Открыть на канвасе»: «Преобразовать» меняет сам сценарий и оставляет список для возврата кнопкой «Вернуть список», «Преобразовать копию» создаёт рядом новый сценарий. Граф, собранный на канвасе, обратно в список не преобразуется.
+A scenario is stored in one of two kinds: a list of steps or a canvas. The kind is chosen at creation. A finished list opens on the canvas with the "Open on the canvas" button: "Convert" changes the scenario itself and keeps the list so it can be returned with the "Return the list" button, "Convert a copy" creates a new scenario next to it. A graph built on the canvas cannot be converted back to a list.
 
-- Блоки действий те же, что шаги списка. К ним добавлены «Старт», «Активировать окно», «Условие» с выходами «да» и «нет», «Счётчик» и «Пока» с выходами «тело» и «готово», «Выполнить сценарий» и «Перехват». Проверка может быть одной или связкой «и» / «или».
-- С одного выхода идёт одна связь, входов у блока сколько угодно. Цикл — это связь назад к уже пройденному блоку.
-- «Перехват» следит за помехой поверх основного потока, например за всплывшим окном. Он проверяется перед каждым блоком и при каждом опросе ожидания, но не чаще своего интервала. После его ветки прерванный блок начинается заново.
-- Рамки и заметки делят сценарий на части. Свёрнутая рамка выглядит одним блоком. «Вынести в сценарий» делает из выделенных блоков отдельный сценарий и ставит на их место блок «Выполнить сценарий».
-- Заготовки — готовые фрагменты в списке блоков. Свои сохраняются кнопкой «Сохранить как заготовку» и лежат в `%AppData%\ClickIt\snippets`.
-- Во время запуска работающий блок обведён, по пройденной связи пробегает точка. После остановки остаётся след: число проходов каждого блока и блок, на котором запуск закончился.
-- «Запустить отсюда» делает один проход с выбранного блока. Точки останова и кнопка «По шагам» ставят запуск на паузу перед блоком; клавиши шага и продолжения задаются в настройках, по умолчанию F10 и F9.
-- «Проверить сейчас» в форме условия один раз смотрит на экран и показывает, выполняется ли условие; для изображения — где оно найдено и с каким сходством.
+- Action blocks are the same as the steps of a list. They are joined by "Start", "Activate window", "Condition" with the "yes" and "no" outputs, "Counter" and "While" with the "body" and "done" outputs, "Run scenario" and "Intercept". A check can be a single one or an "and" / "or" of two.
+- One link leaves one output, a block can have any number of inputs. A loop is a link back to a block already passed.
+- "Intercept" watches for an obstacle on top of the main flow, for example a window that popped up. It is checked before every block and at every poll of a wait, but no more often than its own interval. After its branch the interrupted block starts again.
+- Frames and notes divide a scenario into parts. A collapsed frame looks like a single block. "Move out to a scenario" turns the selected blocks into a separate scenario and puts a "Run scenario" block in their place.
+- Snippets are ready-made pieces in the list of blocks. Your own are saved with the "Save as a snippet" button and are kept in `%AppData%\ClickIt\snippets`.
+- During a run the working block is outlined, and a dot runs along the passed link. After a stop a trace remains: the number of passes of each block and the block on which the run ended.
+- "Run from here" makes one pass from the chosen block. Breakpoints and the "Step by step" button pause the run before a block; the keys for a step and for continuing are set in the settings, F10 and F9 by default.
+- "Check now" in a condition form looks at the screen once and shows whether the condition holds; for an image, where it was found and with what similarity.
 
-Сценарий на канвасе экспортируется в `.clickit` версии 2. Версии ClickIt без канваса такой файл не открывают.
+A canvas scenario is exported to `.clickit` version 2. Versions of ClickIt without the canvas do not open such a file.
 
-## Ограничения
+## Limitations
 
-ClickIt отправляет обычный ввод Windows (`SendInput`) и смотрит на изображение экрана. Свой процесс он не скрывает и ввод не маскирует. Другая программа может учитывать само наличие средства автоматизации на компьютере; гарантии, что она не применит санкции, нет.
+ClickIt sends ordinary Windows input (`SendInput`) and looks at the screen image. It does not hide its process and does not mask the input. Another program may take into account the very presence of an automation tool on the computer; there is no guarantee that it will not apply sanctions.
 
-Окна, запущенные от имени администратора, могут не принимать ввод от обычного процесса.
+Windows started as administrator may not accept input from an ordinary process.
 
-## Требования
+## Requirements
 
-- Windows 10 версии 1809 или новее, либо Windows 11, x64.
-- Среда выполнения WebView2. В Windows 11 она есть всегда. Установщик на машине без WebView2 скачивает её сам; portable-версия без неё не запустится.
+- Windows 10 version 1809 or newer, or Windows 11, x64.
+- The WebView2 runtime. Windows 11 always has it. On a machine without WebView2 the installer downloads it by itself; the portable version will not start without it.
 
-## Данные
+## Data
 
-Сценарии, очереди, расписание, настройки и журнал лежат в `%AppData%\ClickIt`. Установленная и portable-версии работают с одной и той же папкой, одновременно запускается только один экземпляр.
+Scenarios, queues, the schedule, settings and the journal are kept in `%AppData%\ClickIt`. The installed and portable versions use the same folder, and only one instance runs at a time.
 
-В настройках, в блоке «Данные», есть отдельные кнопки очистки: журнал, чаты с моделью, записи подключений, неиспользуемые картинки, резервные списки, кэш окна и служебные остатки. Сценарии, очереди, расписание и настройки они не трогают.
+The "Data" block in the settings has separate cleanup buttons: the journal, chats with the model, connection records, unused images, backup lists, the window cache and leftovers. They do not touch scenarios, queues, the schedule or settings.
 
-При удалении программы папка остаётся. Её стирает отдельная галочка в окне удаления, по умолчанию она выключена.
+When the program is uninstalled the folder stays. A separate box in the uninstall window erases it; it is off by default.
 
-## Сборка
+## Build
 
-Нужны:
+You need:
 
-- Node.js 20.19 или новее (либо 22.12 и новее);
-- Rust 1.85 или новее с набором инструментов `x86_64-pc-windows-msvc`;
+- Node.js 20.19 or newer (or 22.12 and newer);
+- Rust 1.85 or newer with the `x86_64-pc-windows-msvc` toolchain;
 - Microsoft C++ Build Tools.
 
 ```
@@ -148,54 +150,54 @@ npm install
 npm run tauri build
 ```
 
-После сборки:
+After the build:
 
-- установщик: `src-tauri\target\release\bundle\nsis\ClickIt_<версия>_x64-setup.exe`;
-- portable-версия: `src-tauri\target\release\clickit.exe`, файл можно скопировать в любую папку.
+- installer: `src-tauri\target\release\bundle\nsis\ClickIt_<version>_x64-setup.exe`;
+- portable version: `src-tauri\target\release\clickit.exe`, the file can be copied to any folder.
 
-Установщик ставит приложение текущему пользователю, без прав администратора. Язык страниц выбирается по языку Windows. Ярлык на рабочем столе предлагается на последней странице, галочка по умолчанию выключена. При тихой установке этой страницы нет, и ярлык создаётся; ключ `/NS` его отключает.
+The installer installs the application for the current user, without administrator rights. The language of its pages is chosen by the Windows language. A desktop shortcut is offered on the last page, and the box is off by default. A silent installation has no such page, and the shortcut is created; the `/NS` switch turns it off.
 
-Режим разработки:
+Development mode:
 
 ```
 npm run tauri dev
 ```
 
-## Выпуск версии
+## Releasing a version
 
-1. Поставить новый номер версии в трёх файлах: `package.json`, `src-tauri/tauri.conf.json` и `src-tauri/Cargo.toml`.
-2. Закоммитить изменения и поставить на этот коммит тег `v<версия>`, например `v0.2.0`.
-3. Отправить тег на GitHub.
+1. Set the new version number in three files: `package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml`.
+2. Commit the changes and put the tag `v<version>` on that commit, for example `v0.2.0`.
+3. Push the tag to GitHub.
 
-По тегу запускается `.github/workflows/release.yml`: проверяет, что номер в теге совпадает с номером в трёх файлах, прогоняет модульные тесты, собирает и подписывает установщик, собирает portable-версию и прикрепляет к релизу этого тега три файла: установщик, portable-версию и `latest.json`. Если релиза ещё нет, он создаётся с автоматическим списком изменений.
+The tag starts `.github/workflows/release.yml`: it checks that the number in the tag matches the number in the three files, runs the unit tests, builds and signs the installer, builds the portable version and attaches three files to the release of that tag: the installer, the portable version and `latest.json`. If the release does not exist yet, it is created with an automatic list of changes.
 
-`latest.json` — описание обновления: номер версии, ссылка на установщик и его подпись. Установленные копии читают его по адресу `releases/latest/download/latest.json`, поэтому обновление увидят только у релиза, который GitHub считает последним: не у черновика и не у предварительного.
+`latest.json` is the description of the update: the version number, the link to the installer and its signature. Installed copies read it at `releases/latest/download/latest.json`, so the update is seen only for the release that GitHub considers the latest: not a draft and not a pre-release.
 
-### Ключ подписи обновлений
+### Update signing key
 
-Приложение ставит только то обновление, чья подпись сходится с открытым ключом из `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`). Закрытый ключ и пароль к нему в репозитории не хранятся. Они записаны в секреты GitHub Actions `TAURI_SIGNING_PRIVATE_KEY` и `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+The application installs only an update whose signature matches the public key in `src-tauri/tauri.conf.json` (`plugins.updater.pubkey`). The private key and its password are not stored in the repository. They are kept in the GitHub Actions secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
 
-Если закрытый ключ потерян, уже установленные копии обновить нельзя: придётся выпустить версию с новым открытым ключом и ставить её вручную.
+If the private key is lost, already installed copies cannot be updated: a version with a new public key has to be released and installed by hand.
 
-Подпись включается файлом `src-tauri/tauri.release.conf.json`, который подключает только сборка релиза. Обычной локальной сборке ключ не нужен; её установщик не подписан.
+Signing is switched on by the file `src-tauri/tauri.release.conf.json`, which only the release build uses. An ordinary local build does not need the key; its installer is not signed.
 
-## Проверки
+## Checks
 
 ```
 npm run typecheck
 ```
 
-В папке `src-tauri`:
+In the `src-tauri` folder:
 
 ```
 cargo clippy --tests
 cargo test --lib
 ```
 
-Модульные тесты покрывают логику без системных вызовов: проверку сценариев, графов и очередей, обход графа, преобразование списка в граф, расписание, нормализацию записи, импорт и экспорт, словари. Ввод, перехват при записи, трей, горячие клавиши, установщик и обновление проверяются только в работающем приложении.
+The unit tests cover logic without system calls: validation of scenarios, graphs and queues, graph traversal, converting a list to a graph, the schedule, normalisation of a recording, import and export, dictionaries. Input, capture during recording, the tray, hotkeys, the installer and the update are checked only in the running application.
 
-## Устройство
+## Structure
 
-- `src-tauri/src` — ядро на Rust: модель и проверка (`model`), хранение (`storage`), ввод (`input`), окна и процессы (`target`), захват экрана и поиск шаблона (`screen`), исполнитель (`engine`), запись (`recorder`), расписание (`scheduler`), трей, горячие клавиши и окна (`shell`), импорт и экспорт (`transfer`), обновления (`update`), помощник (`harness`, `agent`), команды для интерфейса (`commands`). Консольная `clickit-mcp` — `src-tauri/src/bin/clickit-mcp.rs`.
-- `src` — интерфейс на React и TypeScript: страницы в `features`, словари в `i18n`, типы — зеркало модели Rust — в `types`. Канвас — `src/features/canvas`, на `@xyflow/react`; модель графа в ядре — `src-tauri/src/model/graph.rs`.
-- `src-tauri/windows/hooks.nsh` — дополнения к установщику NSIS.
+- `src-tauri/src` — the Rust core: model and validation (`model`), storage (`storage`), input (`input`), windows and processes (`target`), screen capture and template search (`screen`), the executor (`engine`), recording (`recorder`), the schedule (`scheduler`), tray, hotkeys and windows (`shell`), import and export (`transfer`), updates (`update`), the assistant (`harness`, `agent`), commands for the interface (`commands`). The console `clickit-mcp` is `src-tauri/src/bin/clickit-mcp.rs`.
+- `src` — the interface in React and TypeScript: pages in `features`, dictionaries in `i18n`, types — a mirror of the Rust model — in `types`. The canvas is `src/features/canvas`, built on `@xyflow/react`; the graph model in the core is `src-tauri/src/model/graph.rs`.
+- `src-tauri/windows/hooks.nsh` — additions to the NSIS installer.
