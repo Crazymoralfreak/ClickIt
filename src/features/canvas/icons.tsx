@@ -77,6 +77,12 @@ const SHAPES: Record<NodeType, ReactNode> = {
       <path d="M6 13.5h8v-8M8.5 11 14 5.5" />
     </>
   ),
+  command: (
+    <>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+      <path d="m4.5 6 2.5 2-2.5 2M8.5 10.5h3" />
+    </>
+  ),
 };
 
 export function BlockIcon({ type }: { type: NodeType }) {

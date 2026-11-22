@@ -79,7 +79,16 @@
     "dialog": {
       "exportTitle": "Export scenario",
       "importTitle": "Import scenario",
-      "fileType": "ClickIt scenario"
+      "fileType": "ClickIt scenario",
+      "commandFileTitle": "Program or script",
+      "commandFileType": "Programs and scripts",
+      "commandFolderTitle": "Working folder of the command",
+      "allFiles": "All files",
+      "importCommandsTitle": "A scenario with commands",
+      "importCommandsText": "This file has \"Command\" steps. They start programs and scripts with your rights. Commands in the file: {count}.\n\n{commands}\n\nAdd the scenario only if you understand these commands and trust whoever the file is from.",
+      "importCommandsMore": "…and {count} more. All of them can be seen in the scenario once it is added.",
+      "importCommandsOk": "Add the scenario",
+      "importCommandsCancel": "Do not add"
     }
   },
   "errors": {
@@ -134,7 +143,15 @@
     "extractEmpty": "No block is selected",
     "extractEntry": "\"Start\" and \"Intercept\" blocks cannot be moved out",
     "extractManyEntries": "The pass enters the selected blocks in several places. Only a part with one way in can be moved out.",
-    "extractManyExits": "The pass leaves the selected blocks in several places. Only a part with one way out can be moved out."
+    "extractManyExits": "The pass leaves the selected blocks in several places. Only a part with one way out can be moved out.",
+    "folderMissing": "This folder is no longer there",
+    "folderTooDeep": "Folders can be nested no more than 5 levels deep",
+    "folderIntoItself": "A folder cannot be put into itself or into a folder inside it",
+    "commandFailed": "The command ended with code {code} (step {step})",
+    "commandTimeout": "The command did not end in the time it was given and was stopped (step {step})",
+    "commandStartFailed": "The command could not be started (step {step}): {message}",
+    "commandsDisabled": "The scenario has a \"Command\" step, and running commands is switched off. Switch it on in the settings.",
+    "commandsDeclined": "Saving new commands into the scenario was not allowed: the question in the ClickIt window was declined or not answered"
   },
   "issues": {
     "nameEmpty": "Empty name",
@@ -190,7 +207,9 @@
     "callTooDeep": "Scenario calls are nested deeper than eight levels",
     "callModeMismatch": "The scenario it runs has another mode. \"Whole screen\" and \"Window\" cannot be mixed.",
     "callOtherWindow": "The scenario it runs names another window. It will work in the window of this scenario.",
-    "callInvalid": "The scenario it runs has errors"
+    "callInvalid": "The scenario it runs has errors",
+    "commandEmpty": "Nothing to start is given",
+    "commandTooLong": "The command is too long: the path, the arguments and the folder take up to 2,000 characters, a script text up to 20,000"
   },
   "journal": {
     "codes": {
@@ -218,7 +237,13 @@
       "harnessCapture": "The assistant captured an image {width}×{height}",
       "harnessTemplate": "The assistant saved template {file} for scenario {scenario}",
       "interceptFired": "Intercept in \"{name}\": block {step} fired",
-      "harnessCheck": "The assistant checked a condition in scenario \"{name}\""
+      "harnessCheck": "The assistant checked a condition in scenario \"{name}\"",
+      "commandStarted": "Command started without waiting: \"{name}\", step {step}",
+      "commandDone": "Command done: \"{name}\", step {step}",
+      "commandOutput": "Command output (\"{name}\", step {step}):\n{output}",
+      "commandPassed": "A command failed in \"{name}\", the scenario goes on: {reason}",
+      "commandsImported": "Scenario \"{name}\" was imported with commands: {count}",
+      "harnessCommands": "The assistant saved new commands into scenario \"{name}\": {count}"
     },
     "sources": {
       "manual": "manual",
@@ -273,7 +298,26 @@
     "formatCanvas": "Canvas",
     "formatListHint": "Steps run from top to bottom; branches and loops are nested blocks.",
     "formatCanvasHint": "Blocks are placed anywhere and joined with links. It has intercepts, calls of other scenarios, breakpoints and a run trace.",
-    "deleteCalledText": "This scenario is run by: {names}. Their \"Run scenario\" blocks will stop working."
+    "deleteCalledText": "This scenario is run by: {names}. Their \"Run scenario\" blocks will stop working.",
+    "search": "Search by name",
+    "searchEmpty": "Nothing found",
+    "folderCreate": "New folder",
+    "folderCreateTitle": "New folder",
+    "folderSubTitle": "New folder in \"{name}\"",
+    "folderDefaultName": "New folder",
+    "folderRenameTitle": "Rename folder",
+    "folderDeleteTitle": "Delete folder \"{name}\"?",
+    "folderDeleteText": "Only the folder itself is removed. The scenarios and folders inside it stay and move one level up.",
+    "folderSub": "Subfolder",
+    "folderActions": "Folder actions",
+    "folderExpand": "Expand folder",
+    "folderCollapse": "Collapse folder",
+    "folderCount": "Scenarios inside: {count}",
+    "moveTo": "Move to…",
+    "moveTitle": "Where to put \"{name}\"",
+    "moveRoot": "No folder",
+    "moveCurrent": "it is here now",
+    "moveNewFolder": "New folder…"
   },
   "editor": {
     "loadFailed": "Could not open the scenario",
@@ -340,7 +384,8 @@
       "if": "If (condition)",
       "loop": "Repeat (loop)",
       "breakLoop": "Exit loop",
-      "stop": "Stop scenario"
+      "stop": "Stop scenario",
+      "command": "Command"
     },
     "buttons": {
       "left": "Left",
@@ -408,7 +453,11 @@
       "loopFew": "Repeat {times} times",
       "loopMany": "Repeat {times} times",
       "loopWhile": "Repeat while: {condition}",
-      "loopForever": "Repeat until stopped"
+      "loopForever": "Repeat until stopped",
+      "commandProgram": "Start: {command}",
+      "commandCmd": "cmd script: {text}",
+      "commandPowerShell": "PowerShell script: {text}",
+      "commandEmpty": "No command given"
     },
     "fields": {
       "pauseAfter": "Pause after the step",
@@ -464,6 +513,35 @@
       "empty": "Not chosen",
       "special": "Pick from the list…",
       "hint": "Click the field, then press the key. Keys taken by the system or by the program itself (Esc, Tab, Print Screen, Win) can be picked from the list."
+    },
+    "command": {
+      "off": "Running commands is switched off in the settings. While it is off, a scenario with this step does not start.",
+      "offOpen": "Open settings",
+      "kind": "What to start",
+      "kindProgram": "Program",
+      "kindScript": "Script",
+      "path": "File",
+      "pathHint": "A program, a .bat, .cmd or .ps1 file. Any other file is opened by the program Windows has for it. A name without a path is looked up in the PATH folders.",
+      "browse": "Browse…",
+      "args": "Arguments",
+      "argsHint": "As in a console after the name of the program. Put a value with spaces in quotes.",
+      "shell": "Run with",
+      "shellCmd": "Command Prompt (cmd)",
+      "shellPowerShell": "PowerShell",
+      "text": "Script text",
+      "textHintCmd": "\"exit /b N\" sets the exit code: 0 means all went well, any other number is a failure.",
+      "textHintPowerShell": "\"exit N\" sets the exit code: 0 means all went well, any other number is a failure. An unhandled error is a failure too.",
+      "workDir": "Working folder",
+      "workDirHint": "An empty field: the folder of the program, or the user's home folder for a script.",
+      "window": "Window",
+      "hidden": "No console window",
+      "hiddenHint": "The command works out of sight, and the end of what it printed goes to the journal. With a console window the output shows there, but the window takes the focus.",
+      "end": "End",
+      "wait": "Wait until the command ends",
+      "waitHint": "Without waiting the step only starts the command and goes on. The scenario does not learn how it ended, and stopping the scenario does not end it.",
+      "timeoutHint": "A command that runs out of time is ended together with everything it started. 0 waits until the scenario is stopped.",
+      "onFailure": "On a failure",
+      "onFailureHint": "A failure: the command did not start, returned a code other than 0 or ran out of time."
     }
   },
   "conditions": {
@@ -653,6 +731,9 @@
     "countdown": "Countdown before a start",
     "countdownHint": "From 0 to {max} seconds before a manual start, 0 turns it off. A scheduled start never has a countdown.",
     "cornerStop": "Stop when the cursor reaches the top-left corner of the primary monitor",
+    "commands": "Commands",
+    "allowCommands": "Let the \"Command\" step start programs and scripts",
+    "allowCommandsHint": "A command runs with your rights and can do on this computer whatever you can: delete files, install a program, send data away. While the box is unticked, a scenario with such a step does not start. Tick it when you wrote the commands yourself or have read them. A start of such a scenario by the assistant always waits for your answer, and the question shows the text of the commands.",
     "app": "Application",
     "autostart": "Start with Windows",
     "autostartHint": "After you sign in to Windows, ClickIt appears in the tray without opening its window. The schedule works. Recording never starts by itself.",
@@ -767,7 +848,7 @@
     },
     "steps": {
       "title": "Steps and pauses",
-      "list": "A scenario is a list of steps that run in order: a click, a cursor move, a drag, a scroll, a key, typed text, a pause, a wait for a condition.",
+      "list": "A scenario is a list of steps that run in order: a click, a cursor move, a drag, a scroll, a key, typed text, a command, a pause, a wait for a condition.",
       "pause": "A step can be followed by a pause in milliseconds: an exact one or a \"from–to\" range."
     },
     "cycles": {
@@ -791,6 +872,19 @@
       "timeoutZero": "A timeout of 0 in the \"Wait for a condition\" step means waiting until the scenario is stopped. A timeout of 0 in the \"If\" block means one check right away.",
       "template": "An image template is tied to the screen scale and the theme. Capture the template again if they change.",
       "area": "A search area makes the image check faster."
+    },
+    "commands": {
+      "title": "Commands",
+      "intro": "The \"Command\" step starts a program or a script. On the canvas it is the \"Command\" block with the outputs \"done\" and \"failure\".",
+      "program": "\"Program\" is a file and its arguments. .bat and .cmd files are run by the Command Prompt, .ps1 files by PowerShell.",
+      "script": "\"Script\" is a text for cmd or PowerShell that is kept in the step itself.",
+      "wait": "With waiting the step waits for the command to end, but no longer than the timeout. Exit code 0 means all went well. Another code, a failed start and a timeout are a failure: in a list the step either stops the scenario or goes on, on the canvas the pass takes the \"failure\" output.",
+      "noWait": "Without waiting the step only starts the command and goes on.",
+      "stop": "The Stop button and a timeout end a command the scenario is waiting for, together with everything it started.",
+      "hidden": "A command without a console window works out of sight, and the end of its output goes to the journal.",
+      "safety": "Running commands is off until it is switched on in the settings, in the \"Commands\" block. A command runs with the rights of the user, so switch it on only for commands you understand.",
+      "ask": "Before a file with commands is imported, ClickIt shows them and asks whether to add the scenario. The assistant and an external program can neither put a new command into a scenario nor start a scenario with commands without your answer in the ClickIt window, even when starting without confirmation is on.",
+      "export": "An export carries the text of a script. The file \"Program\" points at is not part of the export."
     },
     "ifElse": {
       "title": "If / else",
@@ -856,7 +950,7 @@
       "title": "Canvas",
       "intro": "A scenario is stored in one of two kinds: a list of steps or a canvas with blocks and links. The kind is chosen when the scenario is created. A list opens on the canvas with the \"Open on the canvas\" button: \"Convert\" changes the scenario itself and keeps the list so that it can be returned, \"Convert a copy\" creates a new scenario.",
       "blocks": "Action blocks are the same as the steps of a list, plus \"Activate window\". \"Wait for a condition\" waits, \"Condition\" picks one of two branches. A check can be a single one or an \"and\" / \"or\" of two. \"Counter\" lets the pass into \"body\" a given number of times, \"While\" does it while a condition holds or until it holds. \"Run scenario\" makes one pass of another scenario, \"Intercept\" watches for an obstacle on top of the main flow.",
-      "links": "One link leaves an output; a block may have any number of incoming links. An output without a link ends the pass. A \"timeout\" output without a link stops the scenario with a failure. A loop is a link going back; it is drawn dashed.",
+      "links": "One link leaves an output; a block may have any number of incoming links. An output without a link ends the pass. A \"timeout\" or a \"failure\" output without a link stops the scenario with a failure. A loop is a link going back; it is drawn dashed.",
       "partsTitle": "Parts of a scenario",
       "frames": "Frames and notes split a scenario into parts. A collapsed frame looks like one block.",
       "extract": "\"Move out to a scenario\" turns the selected blocks into a scenario of their own when one way leads into them and one way leads out.",
@@ -903,7 +997,12 @@
   "harness": {
     "confirmTitle": "Start a scenario",
     "confirmText": "The assistant asks to start \"{name}\".",
-    "confirmOk": "Start"
+    "confirmOk": "Start",
+    "confirmRunCommands": "The scenario runs commands. They will run with your rights:",
+    "saveTitle": "New commands in a scenario",
+    "saveText": "The assistant asks to save commands into \"{name}\". When the scenario is started they will run with your rights:",
+    "saveOk": "Save",
+    "commandFolder": "Folder: {folder}"
   },
   "agent": {
     "limit": "The limit was reached: {count} calls for one message. The turn stopped.",
@@ -991,10 +1090,12 @@
       "yes": "yes",
       "no": "no",
       "body": "body",
-      "done": "done"
+      "done": "done",
+      "error": "failure"
     },
     "portEnd": "An output without a link: the pass ends here",
     "portEndTimeout": "An output without a link: on a timeout the scenario stops with a failure",
+    "portEndError": "An output without a link: when the command fails the scenario stops with a failure",
     "portEndMark": "end of the pass",
     "summary": {
       "start": "The pass begins here",
@@ -1061,6 +1162,7 @@
       "startInfo": "Every pass begins at this block. A scenario has one.",
       "waitHint": "When the condition is met the pass takes the \"found\" output. When the time is out it takes \"timeout\"; with no link there the scenario stops with a failure.",
       "branchTimeoutHint": "0 means one check right away. If the condition is met within this time the pass takes the \"yes\" output, otherwise \"no\".",
+      "commandHint": "When the command ends with code 0 the pass takes the \"done\" output. When it did not start, returned another code or ran out of time it takes \"failure\"; with no link there the scenario stops with a failure.",
       "counterTimes": "Number of passes",
       "counterHint": "The counter lets the pass into the \"body\" output the given number of times and then into \"done\". Link the end of the body back to the counter. The count starts again on every round of the scenario.",
       "counterPause": "Pause between passes",

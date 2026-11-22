@@ -1,9 +1,10 @@
-// Forms of the steps that check conditions or hold other steps: wait, if, loop.
+// Forms of the steps that check conditions, hold other steps or start a command: wait, if, loop, command.
 
 import { useState } from "react";
 import { useT } from "../../i18n";
-import type { IfStep, LoopMode, LoopStep, OnTimeout, WaitStep } from "../../types/scenario";
+import type { CommandStep, IfStep, LoopMode, LoopStep, OnFailure, OnTimeout, WaitStep } from "../../types/scenario";
 import { Field, NumberInput, PauseInput, Select, type Option } from "../../ui";
+import { CommandFields } from "./CommandFields";
 import { ConditionEditor } from "./ConditionEditor";
 import { defaultCondition } from "./defaults";
 import { mouseButtonOptions, type StepFormProps } from "./InputStepForms";
@@ -202,6 +203,27 @@ export function IfForm({ step, onChange, disabled, env, timeoutHint }: IfFormPro
         onPoll={(pollMs) => onChange({ ...step, pollMs })}
         onTimeout={(timeoutMs) => onChange({ ...step, timeoutMs })}
       />
+    </>
+  );
+}
+
+export function CommandForm({ step, onChange, disabled }: StepFormProps<CommandStep>) {
+  const { t } = useT();
+  const failureOptions: Array<Option<OnFailure>> = [
+    { value: "stop", label: t("steps.fields.onTimeoutStop") },
+    { value: "continue", label: t("steps.fields.onTimeoutContinue") },
+  ];
+  return (
+    <>
+      <CommandFields value={step.command} disabled={disabled} onChange={(command) => onChange({ ...step, command })} />
+      <Field label={t("steps.command.onFailure")} hint={t("steps.command.onFailureHint")}>
+        <Select
+          value={step.onFailure}
+          options={failureOptions}
+          disabled={disabled}
+          onChange={(onFailure) => onChange({ ...step, onFailure })}
+        />
+      </Field>
     </>
   );
 }

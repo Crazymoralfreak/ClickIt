@@ -173,6 +173,41 @@ export interface StopStep extends StepBase {
   type: "stop";
 }
 
+export const MAX_SCRIPT_CHARS = 20_000;
+export const MAX_COMMAND_FIELD_CHARS = 2_000;
+export const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
+
+/** The interpreter a script text is handed to. */
+export type ShellKind = "cmd" | "powershell";
+
+export type CommandRun =
+  /** A program or a script file; `args` are written the way they are typed in a console. */
+  | { kind: "program"; path: string; args: string }
+  /** Text of a script, kept in the step itself. */
+  | { kind: "script"; shell: ShellKind; text: string };
+
+export interface CommandSpec {
+  run: CommandRun;
+  /** Empty: the folder of the program, or the user's home folder for a script. */
+  workDir: string;
+  /** Wait until the command ends. Without it the step only starts the command and goes on. */
+  wait: boolean;
+  /** How long to wait for the end; 0 waits until the run is stopped by hand. */
+  timeoutMs: number;
+  /** Start without a console window; what the command prints goes to the journal. */
+  hidden: boolean;
+}
+
+export type OnFailure = "stop" | "continue";
+
+/** Starts a program or a script. Runs only while commands are allowed in the settings. */
+export interface CommandStep extends StepBase {
+  type: "command";
+  command: CommandSpec;
+  /** What to do when the command did not start, ended with a code other than 0 or ran out of time. */
+  onFailure: OnFailure;
+}
+
 export type Step =
   | ClickStep
   | MoveStep
@@ -185,7 +220,8 @@ export type Step =
   | IfStep
   | LoopStep
   | BreakLoopStep
-  | StopStep;
+  | StopStep
+  | CommandStep;
 
 export type StepType = Step["type"];
 export type RepeatableStep = ClickStep | MoveStep | DragStep | ScrollStep | KeyStep | TextStep | PauseStep;
@@ -200,7 +236,7 @@ export const BLOCK_WIDTH = 220;
 export const BLOCK_HEIGHT = 84;
 
 /** An output of a block. One link may leave it. */
-export type Port = "next" | "timeout" | "yes" | "no" | "body" | "done";
+export type Port = "next" | "timeout" | "yes" | "no" | "body" | "done" | "error";
 
 /** What a block has on top of the fields of a step. */
 interface NodeExtra {
@@ -273,6 +309,12 @@ export interface InterceptNode extends NodeBase {
   minIntervalMs: number;
 }
 
+/** Outputs `next` and `error`. An unwired `error` fails the scenario when the command fails. */
+export interface CommandNode extends NodeBase {
+  type: "command";
+  command: CommandSpec;
+}
+
 export type GraphNode =
   | ActionNode
   | StartNode
@@ -282,7 +324,8 @@ export type GraphNode =
   | WhileNode
   | FocusNode
   | CallNode
-  | InterceptNode;
+  | InterceptNode
+  | CommandNode;
 export type NodeType = GraphNode["type"];
 
 export interface GraphPoint {
@@ -344,6 +387,22 @@ export interface ScenarioSummary {
   /** Steps of a list or blocks of a graph. */
   stepCount: number;
   format: ScenarioFormat;
+  /** The folder the scenario lies in; `null` at the top of the list. */
+  folderId: string | null;
+  /** Names of the folders from the top of the list down to that one. */
+  folderPath: string[];
+}
+
+/** How many folders may lie inside one another, the outermost one included. */
+export const MAX_FOLDER_DEPTH = 5;
+
+/** A folder of the list of scenarios. Folders with the same parent keep the order of the list they arrive in. */
+export interface Folder {
+  id: string;
+  name: string;
+  /** Absent for a folder at the top of the list. */
+  parentId?: string;
+  collapsed: boolean;
 }
 
 /** A piece of a graph the user saved to put into other scenarios. */
@@ -435,6 +494,8 @@ export interface Settings {
   harness: boolean;
   /** A harness or the assistant may start a scenario without the confirm dialog. */
   harnessAutoRun: boolean;
+  /** The "Command" steps may start programs and scripts. Off by default. */
+  allowCommands: boolean;
   /** OpenAI-compatible base address. Empty means the assistant does not use the network. */
   agentEndpoint: string;
   /** Model name sent with every assistant request. */

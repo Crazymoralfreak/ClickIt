@@ -1,14 +1,17 @@
 // Defaults for new steps and conditions.
 
-import type {
-  Condition,
-  ConditionKind,
-  Pause,
-  Position,
-  RepeatableStep,
-  ScenarioMode,
-  Step,
-  StepType,
+import {
+  DEFAULT_COMMAND_TIMEOUT_MS,
+  type CommandRun,
+  type CommandSpec,
+  type Condition,
+  type ConditionKind,
+  type Pause,
+  type Position,
+  type RepeatableStep,
+  type ScenarioMode,
+  type Step,
+  type StepType,
 } from "../../types/scenario";
 import { newStepId } from "./tree";
 
@@ -20,6 +23,7 @@ export const STEP_TYPES: ReadonlyArray<StepType> = [
   "scroll",
   "key",
   "text",
+  "command",
   "pause",
   "wait",
   "if",
@@ -95,6 +99,30 @@ export function switchCondition(current: Condition, kind: ConditionKind, mode: S
   return defaultCondition(kind, mode);
 }
 
+export function emptyCommandRun(kind: CommandRun["kind"]): CommandRun {
+  switch (kind) {
+    case "program":
+      return { kind, path: "", args: "" };
+    case "script":
+      return { kind, shell: "cmd", text: "" };
+    default: {
+      const unreachable: never = kind;
+      throw new Error(`Unknown command kind: ${String(unreachable)}`);
+    }
+  }
+}
+
+/** A new command runs without a console window and is waited for, so the window of the scenario stays in front. */
+export function defaultCommand(): CommandSpec {
+  return {
+    run: emptyCommandRun("program"),
+    workDir: "",
+    wait: true,
+    timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
+    hidden: true,
+  };
+}
+
 export function createStep(type: StepType, mode: ScenarioMode): Step {
   const base = { id: newStepId(), enabled: true, pauseAfter: noPause() };
   switch (type) {
@@ -144,6 +172,8 @@ export function createStep(type: StepType, mode: ScenarioMode): Step {
       return { ...base, type };
     case "stop":
       return { ...base, type };
+    case "command":
+      return { ...base, type, command: defaultCommand(), onFailure: "stop" };
     default: {
       const unreachable: never = type;
       throw new Error(`Unknown step type: ${String(unreachable)}`);

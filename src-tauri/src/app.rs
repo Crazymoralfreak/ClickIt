@@ -15,7 +15,7 @@ use chrono::Local;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, Window, WindowEvent};
 use tauri_plugin_autostart::ManagerExt;
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_global_shortcut::Shortcut;
 use windows::Win32::Globalization::GetUserDefaultUILanguage;
 
@@ -27,7 +27,9 @@ use crate::engine::{build_plan, Debug, Engine, Resume, RunOptions, Source};
 use crate::error::{AppError, AppResult};
 use crate::input;
 use crate::journal::Journal;
-use crate::model::scenario::{new_id, Area, Condition, Scenario, ScenarioMode, Step, StepKind, WindowTarget};
+use crate::model::scenario::{
+    new_id, Area, CommandSpec, Condition, Scenario, ScenarioMode, Step, StepKind, WindowTarget,
+};
 use crate::model::schedule::{RunTarget, TargetKind};
 use crate::model::settings::{Settings, MAX_COUNTDOWN_SEC};
 use crate::recorder::{RecordOptions, Recorder};
@@ -53,6 +55,11 @@ const MIN_REGION_SIDE: i32 = 4;
 /// Time for the overlay to leave the screen before the screen is captured.
 const OVERLAY_HIDE_DELAY: Duration = Duration::from_millis(200);
 const SCHEDULER_TICK: Duration = Duration::from_secs(1);
+/// Commands of an imported file the system dialog lists, and how much of each.
+/// The dialog does not scroll; the rest is seen in the scenario itself.
+const IMPORT_SHOWN_COMMANDS: usize = 5;
+const IMPORT_COMMAND_LINES: usize = 6;
+const IMPORT_COMMAND_CHARS: usize = 300;
 
 struct CaptureSession {
     hotkey: Hotkey,
@@ -207,6 +214,19 @@ fn file_name_for(name: &str) -> String {
         "scenario".to_string()
     } else {
         clean
+    }
+}
+
+/// The beginning of a text that has to fit a system dialog: at most
+/// `max_lines` lines and `max_chars` characters, with "…" where it was cut.
+fn clipped(text: &str, max_lines: usize, max_chars: usize) -> String {
+    let lines: Vec<&str> = text.trim_end().lines().collect();
+    let kept = lines.iter().take(max_lines).copied().collect::<Vec<_>>().join("\n");
+    if lines.len() > max_lines || kept.chars().count() > max_chars {
+        let short: String = kept.chars().take(max_chars).collect();
+        format!("{}…", short.trim_end())
+    } else {
+        kept
     }
 }
 
@@ -654,7 +674,13 @@ impl Core {
                 }
             }
         }
+        // Commands run with the rights of the user: nothing starts them until
+        // the setting is on, whoever asked for the start.
+        if !settings.allow_commands && !plan.commands().is_empty() {
+            return Err(AppError::new("commandsDisabled"));
+        }
         let mut options = RunOptions::new(source);
+        options.allow_commands = settings.allow_commands;
         options.countdown_sec = settings.countdown_sec.min(MAX_COUNTDOWN_SEC);
         options.corner_stop = settings.corner_stop;
         options.blocked = settings.blocked_processes;
@@ -1210,9 +1236,82 @@ impl Core {
         let Some(path) = dialog.blocking_pick_file().and_then(|picked| picked.into_path().ok()) else {
             return Ok(None);
         };
-        let scenario = transfer::import(&self.store, &path)?;
+        let mut commands = 0;
+        let imported = transfer::import(&self.store, &path, |found| {
+            commands = found.len();
+            self.approve_imported_commands(found)
+        })?;
+        let Some(scenario) = imported else {
+            return Ok(None);
+        };
+        if commands > 0 {
+            self.journal
+                .add("commandsImported", &[("name", scenario.name.clone()), ("count", commands.to_string())]);
+        }
         self.refresh_tray();
         Ok(Some(scenario))
+    }
+
+    /// A file from somewhere else brings commands with it: they are shown
+    /// before the scenario is added. `false` leaves the file out.
+    fn approve_imported_commands(&self, commands: &[&CommandSpec]) -> bool {
+        let lang = self.lang();
+        let mut shown: Vec<String> = commands
+            .iter()
+            .take(IMPORT_SHOWN_COMMANDS)
+            .map(|command| clipped(&command.describe(), IMPORT_COMMAND_LINES, IMPORT_COMMAND_CHARS))
+            .collect();
+        if commands.len() > shown.len() {
+            let rest = (commands.len() - shown.len()).to_string();
+            shown.push(text(&lang, "native.dialog.importCommandsMore", &[("count", &rest)]));
+        }
+        let message = text(
+            &lang,
+            "native.dialog.importCommandsText",
+            &[("count", &commands.len().to_string()), ("commands", &shown.join("\n\n"))],
+        );
+        let mut dialog = self
+            .app
+            .dialog()
+            .message(message)
+            .title(text(&lang, "native.dialog.importCommandsTitle", &[]))
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                text(&lang, "native.dialog.importCommandsOk", &[]),
+                text(&lang, "native.dialog.importCommandsCancel", &[]),
+            ));
+        if let Some(main) = self.app.get_webview_window(window::MAIN) {
+            dialog = dialog.parent(&main);
+        }
+        dialog.blocking_show()
+    }
+
+    // Commands
+
+    /// Asks for the program or the script file of a "Command" step. `None` when the dialog was cancelled.
+    pub fn pick_command_file(&self) -> Option<String> {
+        let lang = self.lang();
+        let mut dialog = self
+            .app
+            .dialog()
+            .file()
+            .set_title(text(&lang, "native.dialog.commandFileTitle", &[]))
+            .add_filter(text(&lang, "native.dialog.commandFileType", &[]), &["exe", "com", "bat", "cmd", "ps1"])
+            .add_filter(text(&lang, "native.dialog.allFiles", &[]), &["*"]);
+        if let Some(main) = self.app.get_webview_window(window::MAIN) {
+            dialog = dialog.set_parent(&main);
+        }
+        dialog.blocking_pick_file().and_then(|picked| picked.into_path().ok()).map(|path| path.display().to_string())
+    }
+
+    /// Asks for the folder a "Command" step starts in. `None` when the dialog was cancelled.
+    pub fn pick_command_folder(&self) -> Option<String> {
+        let lang = self.lang();
+        let mut dialog = self.app.dialog().file().set_title(text(&lang, "native.dialog.commandFolderTitle", &[]));
+        if let Some(main) = self.app.get_webview_window(window::MAIN) {
+            dialog = dialog.set_parent(&main);
+        }
+        dialog.blocking_pick_folder().and_then(|picked| picked.into_path().ok()).map(|path| path.display().to_string())
     }
 
     // Exit

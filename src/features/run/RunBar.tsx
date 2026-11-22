@@ -4,6 +4,7 @@ import { useApp } from "../../app/context";
 import { useT } from "../../i18n";
 import type { QueueSummary, RunTarget, ScenarioSummary, TargetKind } from "../../types/scenario";
 import { Button, cx } from "../../ui";
+import { scenarioChoices } from "../scenarios/folderTree";
 import { statusDetails, statusHeadline } from "./statusText";
 
 function encodeTarget(target: RunTarget | null): string {
@@ -56,9 +57,9 @@ export function RunBar() {
           <option value="">{t("run.noneSelected")}</option>
           {scenarios.length > 0 ? (
             <optgroup label={t("nav.scenarios")}>
-              {scenarios.map((item) => (
+              {scenarioChoices(scenarios).map(({ item, label }) => (
                 <option key={item.id} value={`scenario:${item.id}`}>
-                  {item.name}
+                  {label}
                 </option>
               ))}
             </optgroup>

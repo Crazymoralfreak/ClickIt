@@ -3,6 +3,7 @@
 import type { TKey, Translator } from "../../i18n";
 import type {
   ClickStep,
+  CommandSpec,
   Condition,
   ConditionKind,
   KeyStep,
@@ -29,6 +30,7 @@ export const STEP_TYPE_KEYS: Record<StepType, TKey> = {
   loop: "steps.types.loop",
   breakLoop: "steps.types.breakLoop",
   stop: "steps.types.stop",
+  command: "steps.types.command",
 };
 
 export const CONDITION_KIND_KEYS: Record<ConditionKind, TKey> = {
@@ -216,6 +218,32 @@ function textPreview(text: string): string {
   return flat.length > TEXT_PREVIEW_LENGTH ? `${flat.slice(0, TEXT_PREVIEW_LENGTH)}…` : flat;
 }
 
+/** "Start: backup.bat nightly", "cmd script: echo done"; the folder of the program is left out. */
+export function commandSummary(command: CommandSpec, { t }: Translator): string {
+  const run = command.run;
+  switch (run.kind) {
+    case "program": {
+      const path = run.path.trim().replace(/^"|"$/g, "");
+      if (path === "") {
+        return t("steps.summary.commandEmpty");
+      }
+      const file = path.split(/[\\/]/).pop() ?? path;
+      return t("steps.summary.commandProgram", { command: textPreview(`${file} ${run.args}`) });
+    }
+    case "script":
+      if (run.text.trim() === "") {
+        return t("steps.summary.commandEmpty");
+      }
+      return t(run.shell === "cmd" ? "steps.summary.commandCmd" : "steps.summary.commandPowerShell", {
+        text: textPreview(run.text),
+      });
+    default: {
+      const unreachable: never = run;
+      throw new Error(`Unknown command: ${String(unreachable)}`);
+    }
+  }
+}
+
 function describe(step: Step, translator: Translator): string {
   const { t } = translator;
   switch (step.type) {
@@ -258,6 +286,8 @@ function describe(step: Step, translator: Translator): string {
       return t("steps.types.breakLoop");
     case "stop":
       return t("steps.types.stop");
+    case "command":
+      return commandSummary(step.command, translator);
     default: {
       const unreachable: never = step;
       throw new Error(`Unknown step: ${String(unreachable)}`);

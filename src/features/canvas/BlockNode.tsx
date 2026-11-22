@@ -5,7 +5,7 @@ import { useT } from "../../i18n";
 import { cx } from "../../ui";
 import { blockTemplate, portLabel, portTone } from "./blockText";
 import { useCanvas, type BlockFlowNode } from "./canvasContext";
-import { isEntry, portsOf, roleOf } from "./graph";
+import { failsUnlinked, isEntry, portsOf, roleOf } from "./graph";
 import { BlockIcon } from "./icons";
 import { useNodeLive, type NodeLive } from "./useRunTrace";
 
@@ -103,7 +103,8 @@ function LiveLabel({ live }: { live: NodeLive }) {
     if (live.phase === "check" && live.checks > 0) {
       parts.push(t("canvas.block.checks", { count: live.checks }));
     }
-    const timed = live.phaseMs !== null && (live.phase === "check" || live.phase === "pause");
+    // An action is timed only in a command block: the time its command has to end.
+    const timed = live.phaseMs !== null && live.phase !== "break";
     return (
       <span className="block-live block-live-active" role="status">
         {parts.join(" · ")}
@@ -139,7 +140,7 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
   const wired = data.wired === "" ? [] : data.wired.split(",");
   const thumb = useThumb(canvas.scenarioId, blockTemplate(node));
   const repeat = "repeat" in node && node.repeat ? node.repeat.times : null;
-  const timed = live.active && live.phaseMs !== null && (live.phase === "check" || live.phase === "pause");
+  const timed = live.active && live.phaseMs !== null && live.phase !== "break";
   const counting = live.counterPass !== null && live.counterTotal !== null;
 
   return (
@@ -246,9 +247,15 @@ export const BlockNode = memo(function BlockNode({ id, data, selected }: NodePro
                   "block-end",
                   `block-end-${side}`,
                   ports.length > 1 && "block-end-labelled",
-                  port === "timeout" && "block-end-bad",
+                  failsUnlinked(port) && "block-end-bad",
                 )}
-                title={port === "timeout" ? t("canvas.portEndTimeout") : t("canvas.portEnd")}
+                title={
+                  port === "timeout"
+                    ? t("canvas.portEndTimeout")
+                    : port === "error"
+                      ? t("canvas.portEndError")
+                      : t("canvas.portEnd")
+                }
               >
                 {t("canvas.portEndMark")}
               </span>

@@ -17,7 +17,14 @@ import {
   type Scenario,
   type ScenarioMode,
 } from "../../types/scenario";
-import { createStep, defaultCondition, DEFAULT_POLL_MS, DEFAULT_WAIT_TIMEOUT_MS, noPause } from "../editor/defaults";
+import {
+  createStep,
+  defaultCommand,
+  defaultCondition,
+  DEFAULT_POLL_MS,
+  DEFAULT_WAIT_TIMEOUT_MS,
+  noPause,
+} from "../editor/defaults";
 import { countSteps } from "../editor/tree";
 
 export const GRID = 20;
@@ -52,6 +59,7 @@ const ROLES: Record<NodeType, Role> = {
   counter: "control",
   while: "control",
   focus: "action",
+  command: "action",
   call: "control",
   stop: "control",
 };
@@ -72,14 +80,20 @@ const PORTS: Record<NodeType, ReadonlyArray<Port>> = {
   call: SINGLE,
   stop: [],
   wait: ["next", "timeout"],
+  command: ["next", "error"],
   branch: ["yes", "no"],
   counter: ["body", "done"],
   while: ["body", "done"],
 };
 
+/** Outputs that fail the scenario when nothing is linked to them, instead of ending the pass. */
+export function failsUnlinked(port: Port): boolean {
+  return port === "timeout" || port === "error";
+}
+
 /** Order of the list of blocks, grouped by role. */
 export const PALETTE: ReadonlyArray<{ role: Role; types: ReadonlyArray<NodeType> }> = [
-  { role: "action", types: ["click", "move", "drag", "scroll", "key", "text", "focus"] },
+  { role: "action", types: ["click", "move", "drag", "scroll", "key", "text", "focus", "command"] },
   { role: "check", types: ["wait", "branch"] },
   { role: "control", types: ["pause", "counter", "while", "call", "stop"] },
   { role: "entry", types: ["intercept"] },
@@ -165,7 +179,13 @@ export function createNode(type: NodeType, mode: ScenarioMode, at: GraphPoint): 
     case "pause":
     case "stop": {
       const step = createStep(type, mode);
-      if (step.type === "wait" || step.type === "if" || step.type === "loop" || step.type === "breakLoop") {
+      if (
+        step.type === "wait" ||
+        step.type === "if" ||
+        step.type === "loop" ||
+        step.type === "breakLoop" ||
+        step.type === "command"
+      ) {
         throw new Error(`Not an action: ${step.type}`);
       }
       return { ...step, id: base.id, x: at.x, y: at.y };
@@ -191,6 +211,8 @@ export function createNode(type: NodeType, mode: ScenarioMode, at: GraphPoint): 
       return { ...base, type, scenarioId: "" };
     case "intercept":
       return { ...base, type, condition: defaultCondition("imageFound", mode), minIntervalMs: DEFAULT_INTERCEPT_MS };
+    case "command":
+      return { ...base, type, command: defaultCommand() };
     default: {
       const unreachable: never = type;
       throw new Error(`Unknown block type: ${String(unreachable)}`);
@@ -613,7 +635,7 @@ export function extractProblem(graph: Graph, ids: ReadonlySet<string>): ExtractP
   const exits = new Set(graph.edges.filter((edge) => inside(edge.from) && !inside(edge.to)).map((edge) => edge.to));
   const endsInside = chosen.some((node) =>
     portsOf(node.type)
-      .filter((port) => port !== "timeout")
+      .filter((port) => !failsUnlinked(port))
       .some((port) => !graph.edges.some((edge) => edge.from === node.id && edge.port === port)),
   );
   return exits.size + (endsInside ? 1 : 0) > 1 ? "extractManyExits" : null;

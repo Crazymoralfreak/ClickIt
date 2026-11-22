@@ -223,6 +223,15 @@ export function SettingsPage() {
         />
       </Section>
 
+      <Section title={t("settings.commands")} collapsible defaultOpen={false}>
+        <CheckRow
+          checked={settings.allowCommands}
+          label={t("settings.allowCommands")}
+          hint={t("settings.allowCommandsHint")}
+          onChange={(allowCommands) => void saveSettings({ ...settings, allowCommands })}
+        />
+      </Section>
+
       <Section title={t("settings.app")} collapsible defaultOpen={false}>
         <CheckRow
           checked={autostart ?? false}

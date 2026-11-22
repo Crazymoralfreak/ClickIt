@@ -15,9 +15,9 @@ use serde_json::{json, Value};
 use tauri::Emitter;
 
 use crate::app::Core;
-use crate::engine::Source;
+use crate::engine::{build_plan, Source};
 use crate::error::{AppError, AppResult};
-use crate::model::scenario::{Condition, LoopMode, Scenario, Step, StepKind, WindowTarget};
+use crate::model::scenario::{CommandSpec, Condition, LoopMode, Scenario, Step, StepKind, WindowTarget};
 use crate::model::schedule::{RunTarget, TargetKind};
 use crate::model::validate::{has_errors, Issue};
 use crate::runtime::{JournalEntry, Rect};
@@ -101,7 +101,15 @@ pub fn tool_definitions() -> Vec<Value> {
                 "Replace a scenario. Send the object from get_scenario with your edits, including revision. ",
                 "The format cannot be changed here: use convert_scenario. Empty ids are filled in. ",
                 "Errors are returned and nothing is written; every issue names its step or block in stepId. ",
-                "List: steps use type click, move, drag, scroll, key, text, pause, wait, if, loop, breakLoop or stop. ",
+                "List: steps use type click, move, drag, scroll, key, text, pause, wait, if, loop, breakLoop, stop or command. ",
+                "A command step is {type: command, command, onFailure: stop|continue}. command is {run, workDir, wait, timeoutMs, hidden}; ",
+                "run is {kind: program, path, args} for a program or a script file with its arguments as one string, ",
+                "or {kind: script, shell: cmd|powerShell, text} for script text kept in the step. ",
+                "workDir may be empty. wait true waits for the end: exit code 0 is success, another code, a start that failed or timeoutMs running out (0 waits without a limit) is a failure, and the command is ended together with what it started. ",
+                "wait false only starts the command and goes on. hidden true starts it without a console window and puts what it prints into the journal. ",
+                "Commands run with the rights of the user and only when the user has switched them on in the settings. ",
+                "Saving a scenario with a new command and starting a scenario with commands always wait for the user's answer in the ClickIt window, where the command text is shown; a save that was not allowed returns commandsDeclined. ",
+                "Add a command only when the user asked for it. ",
                 "Canvas: graph is {nodes, edges, notes}. A node is {id, type, title, enabled, pauseAfter, repeat, x, y} plus the fields of its type. ",
                 "Types: start (exactly one, output next); click, move, drag, scroll, key, text, pause, stop with the fields of the list steps (output next); ",
                 "wait {condition, pollMs, timeoutMs, onFound} (outputs next and timeout); ",
@@ -109,11 +117,12 @@ pub fn tool_definitions() -> Vec<Value> {
                 "counter {times, pauseBetween} (outputs body and done); ",
                 "while {condition, until, pauseBetween} checks the condition once: body runs while it holds, or while it does not when until is true (outputs body and done; link the end of the body back); ",
                 "focus {target: {title, titleMatch contains|exact, process}} brings that window to the front (output next) and fails the run when it is not open; ",
+                "command {command} with the same command object as the list step (outputs next for success and error for a failure; an error output without an edge fails the run); ",
                 "A condition is pixel, imageFound, imageGone, window or process, or {kind: all|any, items: [condition, condition]}: all means both, any means either, and the second is skipped once the first decides it. At most 4 levels. ",
                 "call {scenarioId} runs one pass of another scenario in the same mode (output next); ",
                 "intercept {condition, minIntervalMs >= 500} has no input (output next leads to its own branch). ",
                 "An edge is {from, port, to}. One edge per output, any number of edges into a block. ",
-                "An output without an edge ends the pass; a timeout output without an edge fails the run. ",
+                "An output without an edge ends the pass; a timeout or error output without an edge fails the run. ",
                 "A loop is an edge back to an earlier block. A counter sends the pass into body `times` times and then into done: link the end of the body back to the counter. ",
                 "An intercept is checked before every block and on every poll of a wait or a branch, at most once per minIntervalMs; ",
                 "when it holds, its branch runs to an output without an edge and the interrupted block starts over. ",
@@ -170,7 +179,7 @@ pub fn tool_definitions() -> Vec<Value> {
         ),
         tool(
             "run_scenario",
-            "Start a scenario by id. Does not wait until it finishes: a scenario may run until stopped. Returns outcome started or declined. Unless auto-run is enabled, ClickIt asks the user first. For a canvas scenario startNode makes a trial run: one pass from that block, without the repeats of the scenario.",
+            "Start a scenario by id. Does not wait until it finishes: a scenario may run until stopped. Returns outcome started or declined. Unless auto-run is enabled, ClickIt asks the user first; a scenario with command steps always asks and does not start while commands are switched off in the settings. For a canvas scenario startNode makes a trial run: one pass from that block, without the repeats of the scenario.",
             json!({
                 "type": "object",
                 "properties": {"id": {"type": "string"}, "startNode": {"type": "string"}},
@@ -462,6 +471,26 @@ pub fn save_scenario(core: &Core, params: &Value, reject_errors: bool) -> AppRes
     if reject_errors && has_errors(&issues) {
         return Ok(json!({"saved": false, "issues": issues}));
     }
+    if reject_errors {
+        // A command runs with the rights of the user, and a scenario is later
+        // started by hand without reading it again. So a tool does not write a
+        // command the user has not seen.
+        let added = added_commands(&stored, &scenario);
+        if !added.is_empty() {
+            if !confirm(core, Ask::Save, &scenario.name, &added)? {
+                return Err(AppError::new("commandsDeclined"));
+            }
+            // The answer took a while: the scenario may have been started or changed meanwhile.
+            if core.scenario_in_use(&scenario.id) {
+                return Err(AppError::new("busy"));
+            }
+            if core.store.load_scenario(&scenario.id)?.revision != stored.revision {
+                return Err(AppError::new("stale"));
+            }
+            core.journal
+                .add("harnessCommands", &[("name", scenario.name.clone()), ("count", added.len().to_string())]);
+        }
+    }
     core.store.save_scenario(&scenario)?;
     if stored.name != scenario.name {
         core.refresh_tray();
@@ -542,15 +571,88 @@ fn run_scenario(core: &Core, id: &str, start_node: Option<String>) -> AppResult<
     if core.engine.is_running() || core.recorder.is_active() || core.is_updating() {
         return Err(AppError::new("busy"));
     }
-    let auto_run = core.settings().harness_auto_run;
-    let accepted = if auto_run { false } else { confirm(core, &scenario.name)? };
+    let target = RunTarget { kind: TargetKind::Scenario, id: id.to_string() };
+    let settings = core.settings();
+    // Commands of the scenario and of everything it runs. With them the start
+    // waits for the user whatever the auto-run setting says, and the question
+    // shows what is about to be started.
+    let commands = shown_commands(&build_plan(&core.store, &target)?.commands());
+    if !commands.is_empty() && !settings.allow_commands {
+        // No question about a start that cannot happen. The journal gets the
+        // same entry a start refused by the core leaves.
+        let error = AppError::new("commandsDisabled");
+        core.journal.add_with_reason("startRejected", &[("name", scenario.name.clone())], &error);
+        return Err(error);
+    }
+    let auto_run = settings.harness_auto_run && commands.is_empty();
+    let accepted = if auto_run { false } else { confirm(core, Ask::Run, &scenario.name, &commands)? };
     let allowed = run_outcome(auto_run, accepted) == "started";
     if !allowed {
         return Ok(json!({"outcome": "declined"}));
     }
-    let target = RunTarget { kind: TargetKind::Scenario, id: id.to_string() };
+    if !commands.is_empty() {
+        // The answer was about these commands: a scenario that changed while
+        // the question was open is not the one that was allowed.
+        let now = shown_commands(&build_plan(&core.store, &target)?.commands());
+        if now != commands {
+            return Err(AppError::new("stale"));
+        }
+    }
     core.start_from(&target, Source::Harness, start_node, None)?;
     Ok(json!({"outcome": "started"}))
+}
+
+/// A command the way the confirm dialog shows it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShownCommand {
+    text: String,
+    /// Empty when the step does not set the folder.
+    work_dir: String,
+}
+
+/// The commands for the dialog: every different one once, in a stable order.
+fn shown_commands(commands: &[&CommandSpec]) -> Vec<ShownCommand> {
+    let mut shown: Vec<ShownCommand> = commands
+        .iter()
+        .map(|command| ShownCommand { text: command.describe(), work_dir: command.work_dir.trim().to_string() })
+        .collect();
+    shown.sort();
+    shown.dedup();
+    shown
+}
+
+/// Commands a save would bring into a scenario: the ones that were not in it,
+/// and the ones that were switched off there and would now run. A command is
+/// what it starts and where; how long it is waited for is not a new command.
+fn added_commands(stored: &Scenario, incoming: &Scenario) -> Vec<ShownCommand> {
+    let known = shown_commands(&stored.commands(false));
+    let live = shown_commands(&stored.commands(true));
+    let mut added = shown_commands(&incoming.commands(false));
+    added.retain(|command| !known.contains(command));
+    let woken = shown_commands(&incoming.commands(true)).into_iter().filter(|command| !live.contains(command));
+    added.extend(woken);
+    added.sort();
+    added.dedup();
+    added
+}
+
+/// What the confirm dialog asks about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Ask {
+    /// Start a scenario.
+    Run,
+    /// Write new commands into a scenario.
+    Save,
+}
+
+impl Ask {
+    fn as_str(self) -> &'static str {
+        match self {
+            Ask::Run => "run",
+            Ask::Save => "save",
+        }
+    }
 }
 
 /// `started` when auto-run is on or the dialog was accepted. A timeout is a decline.
@@ -563,7 +665,7 @@ pub(crate) fn run_outcome(auto_run: bool, accepted: bool) -> &'static str {
 }
 
 /// Shows the main window and waits for the answer. `false` is a decline or a timeout.
-fn confirm(core: &Core, name: &str) -> AppResult<bool> {
+fn confirm(core: &Core, ask: Ask, name: &str, commands: &[ShownCommand]) -> AppResult<bool> {
     let (tx, rx) = mpsc::channel();
     let id = {
         let mut slot = core.confirm.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -575,7 +677,10 @@ fn confirm(core: &Core, name: &str) -> AppResult<bool> {
         id
     };
     window::show_main(core.app());
-    let _ = core.app().emit("harness:confirm", json!({"requestId": id, "name": name}));
+    let _ = core.app().emit(
+        "harness:confirm",
+        json!({"requestId": id, "kind": ask.as_str(), "name": name, "commands": commands}),
+    );
     let answer = rx.recv_timeout(CONFIRM_WAIT).unwrap_or(false);
     let mut slot = core.confirm.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if slot.as_ref().is_some_and(|wait| wait.id == id) {
@@ -1009,6 +1114,43 @@ mod tests {
         assert_eq!(run_outcome(false, false), "declined");
         assert_eq!(run_outcome(false, true), "started");
         assert_eq!(run_outcome(true, false), "started");
+    }
+
+    fn with_commands(steps: Value) -> Scenario {
+        scenario_from(&json!({"scenario": {"id": "sc-1", "name": "Demo", "steps": steps}})).unwrap()
+    }
+
+    fn script(text: &str) -> Value {
+        json!({"type": "command", "command": {"run": {"kind": "script", "shell": "cmd", "text": text}}})
+    }
+
+    #[test]
+    fn a_save_asks_about_the_commands_it_brings_and_about_the_ones_it_switches_on() {
+        let texts = |added: Vec<ShownCommand>| added.into_iter().map(|command| command.text).collect::<Vec<_>>();
+        let mut off = script("echo off");
+        off["enabled"] = json!(false);
+        let stored = with_commands(json!([script("echo kept"), off.clone()]));
+
+        // Nothing new: the same commands, one of them waited for differently.
+        let mut patient = script("echo kept");
+        patient["command"]["timeoutMs"] = json!(5000);
+        assert!(added_commands(&stored, &with_commands(json!([patient, off.clone()]))).is_empty());
+        // Taking a command away asks nothing.
+        assert!(added_commands(&stored, &with_commands(json!([]))).is_empty());
+
+        // A new command is asked about even while its step is switched off.
+        let mut asleep = script("echo new");
+        asleep["enabled"] = json!(false);
+        let added = added_commands(&stored, &with_commands(json!([script("echo kept"), off, asleep])));
+        assert_eq!(texts(added), ["[cmd]\necho new"]);
+        // So is one the user had switched off.
+        let added = added_commands(&stored, &with_commands(json!([script("echo kept"), script("echo off")])));
+        assert_eq!(texts(added), ["[cmd]\necho off"]);
+        // The same text in another folder is another command.
+        let mut moved = script("echo kept");
+        moved["command"]["workDir"] = json!("C:\\Temp");
+        let added = added_commands(&stored, &with_commands(json!([moved])));
+        assert_eq!(added, [ShownCommand { text: "[cmd]\necho kept".to_string(), work_dir: "C:\\Temp".to_string() }]);
     }
 
     #[test]

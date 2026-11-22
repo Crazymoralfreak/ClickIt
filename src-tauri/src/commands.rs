@@ -24,6 +24,7 @@ use crate::model::settings::Settings;
 use crate::model::validate::{validate_queue, Issue};
 use crate::runtime::{AppInfo, JournalEntry, RegionPurpose, RunStatus, RunTrace, UpdateStatus, WindowInfo};
 use crate::screen;
+use crate::storage::folders::Folder;
 use crate::storage::{CleanupKind, QueueSummary, ScenarioSummary, Snippet};
 use crate::target;
 use crate::update;
@@ -172,8 +173,14 @@ pub fn scenario_get(core: CoreState<'_>, id: String) -> AppResult<Scenario> {
 }
 
 /// `format` is `"list"` or `"canvas"`; a canvas scenario starts with its start block.
+/// A folder that is gone by now leaves the new scenario at the top of the list.
 #[tauri::command(async)]
-pub fn scenario_create(core: CoreState<'_>, name: String, format: Option<String>) -> AppResult<Scenario> {
+pub fn scenario_create(
+    core: CoreState<'_>,
+    name: String,
+    format: Option<String>,
+    folder_id: Option<String>,
+) -> AppResult<Scenario> {
     let name = checked_name(&name)?;
     let scenario = match format.as_deref() {
         Some("canvas") => Scenario::new_canvas(name),
@@ -181,8 +188,58 @@ pub fn scenario_create(core: CoreState<'_>, name: String, format: Option<String>
         Some(_) => return Err(AppError::new("invalid")),
     };
     core.store.save_scenario(&scenario)?;
+    if let Some(folder) = folder_id.as_deref() {
+        let _ = core.store.move_scenario(&scenario.id, Some(folder));
+    }
     core.refresh_tray();
     Ok(scenario)
+}
+
+// Folders of the list of scenarios
+
+#[tauri::command(async)]
+pub fn folder_list(core: CoreState<'_>) -> Vec<Folder> {
+    core.store.load_folders().folders
+}
+
+/// `parent_id` puts the new folder inside another one.
+#[tauri::command(async)]
+pub fn folder_create(core: CoreState<'_>, name: String, parent_id: Option<String>) -> AppResult<Folder> {
+    core.store.create_folder(checked_name(&name)?, parent_id.as_deref())
+}
+
+#[tauri::command(async)]
+pub fn folder_rename(core: CoreState<'_>, id: String, name: String) -> AppResult<()> {
+    core.store.rename_folder(&id, checked_name(&name)?)
+}
+
+/// Removes the folder only: its folders and scenarios go one level up.
+#[tauri::command(async)]
+pub fn folder_delete(core: CoreState<'_>, id: String) -> AppResult<()> {
+    core.store.delete_folder(&id)
+}
+
+#[tauri::command(async)]
+pub fn folder_set_collapsed(core: CoreState<'_>, id: String, collapsed: bool) -> AppResult<()> {
+    core.store.set_folder_collapsed(&id, collapsed)
+}
+
+/// Puts a folder into `parent_id` (the top of the list without it), in front of
+/// `before_id` or after the last folder there. Returns the folders in their new order.
+#[tauri::command(async)]
+pub fn folder_move(
+    core: CoreState<'_>,
+    id: String,
+    parent_id: Option<String>,
+    before_id: Option<String>,
+) -> AppResult<Vec<Folder>> {
+    core.store.move_folder(&id, parent_id.as_deref(), before_id.as_deref())
+}
+
+/// Puts a scenario into a folder, or at the top of the list without `folder_id`.
+#[tauri::command(async)]
+pub fn scenario_move(core: CoreState<'_>, id: String, folder_id: Option<String>) -> AppResult<()> {
+    core.store.move_scenario(&id, folder_id.as_deref())
 }
 
 /// What the editor and the list of scenarios show besides the scenario itself.
@@ -312,6 +369,18 @@ pub fn scenario_export(core: CoreState<'_>, id: String) -> AppResult<Option<Stri
 #[tauri::command(async)]
 pub fn scenario_import(core: CoreState<'_>) -> AppResult<Option<Scenario>> {
     core.import_scenario()
+}
+
+/// The file dialog of the program of a "Command" step.
+#[tauri::command(async)]
+pub fn command_pick_file(core: CoreState<'_>) -> Option<String> {
+    core.pick_command_file()
+}
+
+/// The folder dialog of the working folder of a "Command" step.
+#[tauri::command(async)]
+pub fn command_pick_folder(core: CoreState<'_>) -> Option<String> {
+    core.pick_command_folder()
 }
 
 #[tauri::command(async)]

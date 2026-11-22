@@ -2,7 +2,7 @@
 
 import type { TKey, Translator } from "../../i18n";
 import type { Condition, GraphNode, NodeType, Port, Step } from "../../types/scenario";
-import { conditionSummary, stepSummary } from "../editor/summary";
+import { commandSummary, conditionSummary, stepSummary } from "../editor/summary";
 import type { Role } from "./graph";
 
 const TYPE_KEYS: Record<NodeType, TKey> = {
@@ -22,6 +22,7 @@ const TYPE_KEYS: Record<NodeType, TKey> = {
   focus: "canvas.types.focus",
   call: "canvas.types.call",
   intercept: "canvas.types.intercept",
+  command: "steps.types.command",
 };
 
 export const ROLE_KEYS: Record<Role, TKey> = {
@@ -38,6 +39,7 @@ const PORT_KEYS: Record<Port, TKey> = {
   no: "canvas.ports.no",
   body: "canvas.ports.body",
   done: "canvas.ports.done",
+  error: "canvas.ports.error",
 };
 
 /** Colour of an output and of the link that leaves it. */
@@ -53,9 +55,16 @@ export function blockTitle(node: GraphNode, translator: Translator): string {
   return own ? own : typeName(node.type, translator);
 }
 
-/** The "next" output of a wait is the one a met condition takes, so it reads "found". */
+/** The "next" output of a wait is the one a met condition takes, so it reads "found";
+ *  the one of a command is taken when the command went well, so it reads "done". */
 export function portLabel(type: NodeType, port: Port, { t }: Translator): string {
-  return type === "wait" && port === "next" ? t("canvas.ports.found") : t(PORT_KEYS[port]);
+  if (port === "next" && type === "wait") {
+    return t("canvas.ports.found");
+  }
+  if (port === "next" && type === "command") {
+    return t("canvas.ports.done");
+  }
+  return t(PORT_KEYS[port]);
 }
 
 export function portTone(type: NodeType, port: Port): PortTone {
@@ -65,9 +74,10 @@ export function portTone(type: NodeType, port: Port): PortTone {
       return "good";
     case "no":
     case "timeout":
+    case "error":
       return "bad";
     case "next":
-      return type === "wait" ? "good" : "plain";
+      return type === "wait" || type === "command" ? "good" : "plain";
     case "done":
       return "plain";
     default: {
@@ -119,6 +129,8 @@ export function blockSummary(node: GraphNode, translator: Translator, scenarioNa
     }
     case "intercept":
       return t("canvas.summary.intercept", { condition: conditionSummary(node.condition, translator) });
+    case "command":
+      return commandSummary(node.command, translator);
     default: {
       const unreachable: never = node;
       throw new Error(`Unknown block: ${String(unreachable)}`);

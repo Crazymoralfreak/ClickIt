@@ -8,6 +8,7 @@
 //! scenarios\<id>\scenario.json  a list of steps, + template PNG files next to it
 //! scenarios\<id>\graph.json     a graph instead; such a folder has no scenario.json
 //! scenarios\<id>\steps.backup.json  the list a graph was made from
+//! folders.json            folders of the list of scenarios and what lies where
 //! queues\<id>.json
 //! snippets\<id>\snippet.json    the user's canvas snippets with their templates
 //! chats\<id>.jsonl
@@ -18,9 +19,12 @@
 //! `graph` field and would save such a scenario without it. Without a
 //! `scenario.json` an old copy simply does not list the scenario.
 
+pub mod folders;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use serde::de::DeserializeOwned;
@@ -56,6 +60,10 @@ pub struct ScenarioSummary {
     pub step_count: usize,
     /// `"list"` or `"canvas"`.
     pub format: &'static str,
+    /// The folder the scenario lies in; `None` at the top of the list.
+    pub folder_id: Option<String>,
+    /// Names of the folders from the top of the list down to that one.
+    pub folder_path: Vec<String>,
 }
 
 /// A piece of a graph the user saved to put into other scenarios.
@@ -189,6 +197,8 @@ pub type ScheduleState = BTreeMap<String, RuleState>;
 
 pub struct Store {
     root: PathBuf,
+    /// Held while `folders.json` is read, changed and written.
+    folders_lock: Mutex<()>,
 }
 
 /// Ids arrive from the UI and become file names: letters, digits, `-` and `_` only.
@@ -246,7 +256,7 @@ impl Store {
     pub fn at(root: PathBuf) -> AppResult<Self> {
         fs::create_dir_all(root.join("scenarios"))?;
         fs::create_dir_all(root.join("queues"))?;
-        Ok(Self { root })
+        Ok(Self { root, folders_lock: Mutex::new(()) })
     }
 
     pub fn root(&self) -> &Path {
@@ -412,21 +422,28 @@ impl Store {
         if dir.is_dir() {
             fs::remove_dir_all(dir)?;
         }
+        self.forget_placement(id);
         Ok(())
     }
 
     /// Scenarios sorted by name. Folders with a damaged file are left alone and not listed.
     pub fn list_scenarios(&self) -> Vec<ScenarioSummary> {
+        let folders = self.load_folders();
         let mut list: Vec<ScenarioSummary> = self
             .scenario_ids()
             .iter()
             .filter_map(|id| self.load_scenario(id).ok())
-            .map(|scenario| ScenarioSummary {
-                step_count: scenario.step_count(),
-                format: scenario.format(),
-                id: scenario.id,
-                name: scenario.name,
-                mode: scenario.mode,
+            .map(|scenario| {
+                let folder_id = folders.placement.get(&scenario.id).cloned();
+                ScenarioSummary {
+                    step_count: scenario.step_count(),
+                    format: scenario.format(),
+                    folder_path: folder_id.as_deref().map(|id| folders.path(id)).unwrap_or_default(),
+                    folder_id,
+                    id: scenario.id,
+                    name: scenario.name,
+                    mode: scenario.mode,
+                }
             })
             .collect();
         list.sort_by_key(|item| item.name.to_lowercase());
@@ -493,6 +510,7 @@ impl Store {
         scenario.renew_step_ids();
         self.copy_templates(id, &scenario)?;
         self.save_scenario(&scenario)?;
+        self.place_beside(&scenario.id, id);
         Ok(scenario)
     }
 
@@ -536,6 +554,7 @@ impl Store {
         scenario.version = GRAPH_VERSION;
         self.copy_templates(id, &scenario)?;
         self.save_scenario(&scenario)?;
+        self.place_beside(&scenario.id, id);
         Ok(scenario)
     }
 
@@ -566,6 +585,8 @@ impl Store {
         let stored = stored.and_then(|()| self.save_scenario(source));
         if stored.is_err() {
             let _ = self.delete_scenario(&created.id);
+        } else {
+            self.place_beside(&created.id, &source.id);
         }
         stored
     }

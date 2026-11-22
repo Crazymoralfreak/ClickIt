@@ -58,6 +58,25 @@ export interface HarnessDialogEvent {
   entry?: DialogEntry;
 }
 
+/** A command the way the confirm dialog shows it. */
+export interface ShownCommand {
+  /** The program with its arguments, or the script under the name of its interpreter. */
+  text: string;
+  /** Empty when the step does not set the folder. */
+  workDir: string;
+}
+
+/**
+ * A question a harness or the assistant waits on: start the scenario, or
+ * save new commands into it. `commands` is empty for a scenario without them.
+ */
+export interface HarnessAsk {
+  requestId: number;
+  kind: "run" | "save";
+  name: string;
+  commands: ShownCommand[];
+}
+
 export interface AppError {
   code: string;
   params?: Record<string, string>;

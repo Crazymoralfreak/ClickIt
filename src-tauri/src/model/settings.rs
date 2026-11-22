@@ -42,6 +42,9 @@ pub struct Settings {
     pub harness: bool,
     /// A harness or the assistant may start a scenario without the confirm dialog.
     pub harness_auto_run: bool,
+    /// The "Command" steps may start programs and scripts. Off by default:
+    /// a scenario that has such a step does not start until the user turns it on.
+    pub allow_commands: bool,
     /// OpenAI-compatible base address, for example `http://127.0.0.1:11434/v1`. Empty means the assistant is off.
     pub agent_endpoint: String,
     /// Model name sent with every assistant request.
@@ -81,6 +84,7 @@ impl Default for Settings {
             check_updates: true,
             harness: false,
             harness_auto_run: false,
+            allow_commands: false,
             agent_endpoint: String::new(),
             agent_model: String::new(),
             current: None,

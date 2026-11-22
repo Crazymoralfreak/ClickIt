@@ -4,6 +4,7 @@ import { useApp } from "../../app/context";
 import { useT, type TKey } from "../../i18n";
 import type { QueueSummary, ScenarioSummary, ScheduleRule } from "../../types/scenario";
 import { Button, EmptyState, PageFrame, Section, type Option } from "../../ui";
+import { scenarioChoices } from "../scenarios/folderTree";
 import { RuleCard } from "./RuleCard";
 import { defaultRule, firstTarget, ruleErrors, type Targets } from "./scheduleRules";
 import "./schedule.css";
@@ -45,9 +46,9 @@ export function SchedulePage() {
       return null;
     }
     return [
-      ...targets.scenarios.map((scenario) => ({
-        value: `scenario:${scenario.id}`,
-        label: t("schedule.targetScenario", { name: scenario.name }),
+      ...scenarioChoices(targets.scenarios).map(({ item, label }) => ({
+        value: `scenario:${item.id}`,
+        label: t("schedule.targetScenario", { name: label }),
       })),
       ...targets.queues.map((queue) => ({
         value: `queue:${queue.id}`,

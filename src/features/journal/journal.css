@@ -36,4 +36,6 @@
 .journal-text {
   min-width: 0;
   overflow-wrap: anywhere;
+  /* What a command printed keeps its lines. */
+  white-space: pre-wrap;
 }
