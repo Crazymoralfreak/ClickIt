@@ -8,8 +8,9 @@ use serde::Serialize;
 use super::graph::{Graph, Node, NodeKind, MAX_CALL_DEPTH, MAX_INTERCEPTS, MIN_INTERCEPT_MS};
 use super::queue::Queue;
 use super::scenario::{
-    Area, Condition, CoordSpace, LoopMode, OnFound, Pause, Position, Repeat, RepeatMode, Scenario, ScenarioMode,
-    Step, StepKind, MAX_DEPTH, MAX_STEPS, MAX_STEP_REPEAT,
+    Area, CommandRun, CommandSpec, Condition, CoordSpace, LoopMode, OnFound, Pause, Position, Repeat, RepeatMode,
+    Scenario, ScenarioMode, Step, StepKind, MAX_COMMAND_FIELD_CHARS, MAX_DEPTH, MAX_SCRIPT_CHARS, MAX_STEPS,
+    MAX_STEP_REPEAT,
 };
 use crate::input::keys;
 
@@ -216,7 +217,33 @@ impl Checker<'_> {
                 }
             }
             StepKind::Pause { duration } => self.pause(Some(id), duration),
-            StepKind::Wait { .. } | StepKind::If { .. } | StepKind::Loop { .. } | StepKind::BreakLoop | StepKind::Stop => {}
+            StepKind::Wait { .. }
+            | StepKind::If { .. }
+            | StepKind::Loop { .. }
+            | StepKind::BreakLoop
+            | StepKind::Stop
+            | StepKind::Command { .. } => {}
+        }
+    }
+
+    /// A "Command" step or block: there has to be something to start, and it has to fit the limits.
+    fn command(&mut self, id: &str, command: &CommandSpec) {
+        let longer = |text: &str, max: usize| text.chars().count() > max;
+        let (empty, too_long) = match &command.run {
+            CommandRun::Program { path, args } => (
+                path.trim().is_empty(),
+                longer(path, MAX_COMMAND_FIELD_CHARS) || longer(args, MAX_COMMAND_FIELD_CHARS),
+            ),
+            CommandRun::Script { text, .. } => (text.trim().is_empty(), longer(text, MAX_SCRIPT_CHARS)),
+        };
+        if empty {
+            self.error(Some(id), "commandEmpty");
+        }
+        if too_long || longer(&command.work_dir, MAX_COMMAND_FIELD_CHARS) {
+            self.error(Some(id), "commandTooLong");
+        }
+        if command.timeout_ms < 0 {
+            self.error(Some(id), "timeoutNegative");
         }
     }
 
@@ -275,6 +302,7 @@ impl Checker<'_> {
                         self.error(Some(id), "breakOutsideLoop");
                     }
                 }
+                StepKind::Command { command, .. } => self.command(id, command),
                 StepKind::Click { .. }
                 | StepKind::Move { .. }
                 | StepKind::Drag { .. }
@@ -330,6 +358,7 @@ impl Checker<'_> {
                 }
             }
             NodeKind::Call { scenario_id } => self.call(scenario, id, scenario_id),
+            NodeKind::Command { command } => self.command(id, command),
             NodeKind::Start
             | NodeKind::Stop
             | NodeKind::Click { .. }
@@ -675,6 +704,36 @@ mod tests {
         });
         let issues = validate_scenario(&scenario(vec![wait]), &|_| false);
         assert_eq!(issues[0].code, "templateFileMissing");
+    }
+
+    #[test]
+    fn a_command_needs_something_to_start_and_fits_the_limits() {
+        let spec = |run: CommandRun| CommandSpec { run, work_dir: String::new(), wait: true, timeout_ms: 0, hidden: false };
+        let step = |command: CommandSpec| Step::new(StepKind::Command { command, on_failure: Default::default() });
+        let program = |path: &str, args: &str| CommandRun::Program { path: path.into(), args: args.into() };
+        let script = |text: &str| CommandRun::Script { shell: Default::default(), text: text.into() };
+
+        assert!(codes(&scenario(vec![step(spec(program("notepad.exe", ""))), step(spec(script("dir")))])).is_empty());
+        assert_eq!(codes(&scenario(vec![step(spec(program("  ", "/x")))])), vec!["commandEmpty"]);
+        assert_eq!(codes(&scenario(vec![step(spec(script("\n")))])), vec!["commandEmpty"]);
+        let long = "x".repeat(MAX_SCRIPT_CHARS + 1);
+        assert_eq!(codes(&scenario(vec![step(spec(script(&long)))])), vec!["commandTooLong"]);
+        assert_eq!(codes(&scenario(vec![step(spec(program("a.exe", &long)))])), vec!["commandTooLong"]);
+        let mut late = spec(program("a.exe", ""));
+        late.timeout_ms = -1;
+        late.work_dir = long;
+        assert_eq!(codes(&scenario(vec![step(late.clone())])), vec!["commandTooLong", "timeoutNegative"]);
+        // A step that starts something is not repeated the way a click is.
+        let mut twice = step(spec(script("dir")));
+        twice.repeat = Some(Repeat { times: 2, pause_between: Pause::default() });
+        assert_eq!(codes(&scenario(vec![twice])), vec!["repeatNotAllowed"]);
+
+        // A block is checked the same way, and `error` is one of its outputs.
+        let graph = canvas(
+            vec![node("a", NodeKind::Start), node("c", NodeKind::Command { command: late }), node("s", NodeKind::Stop)],
+            vec![edge("a", Port::Next, "c"), edge("c", Port::Error, "s")],
+        );
+        assert_eq!(codes(&graph), vec!["commandTooLong", "timeoutNegative"]);
     }
 
     #[test]

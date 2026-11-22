@@ -285,6 +285,30 @@
   resize: vertical;
 }
 
+/* Command step */
+
+.command-script {
+  min-height: 120px;
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 13px;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* Shown while running commands is switched off in the settings. */
+.command-off {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 4px 0 6px;
+  padding: 8px 10px;
+  color: var(--text);
+  background: var(--warning-soft);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius);
+}
+
 .step-branches {
   margin: 4px 0 2px 12px;
   padding-left: 10px;

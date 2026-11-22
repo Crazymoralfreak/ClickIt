@@ -15,7 +15,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 use crate::error::{AppError, AppResult};
 use crate::model::graph::GRAPH_VERSION;
-use crate::model::scenario::{new_id, Scenario, MAX_STEPS};
+use crate::model::scenario::{new_id, CommandSpec, Scenario, MAX_STEPS};
 use crate::storage::{valid_id, valid_template_name, Store};
 
 pub const EXTENSION: &str = "clickit";
@@ -95,8 +95,21 @@ struct Imported {
 
 /// Adds the scenario from `path` as a new one, together with the scenarios it
 /// runs. A broken file changes nothing on the disk.
-pub fn import(store: &Store, path: &Path) -> AppResult<Scenario> {
+///
+/// A file with "Command" steps is added only when `approve` says so: it gets
+/// every command of the file, the switched off ones too, before anything is
+/// written. `None` when it said no.
+pub fn import(
+    store: &Store,
+    path: &Path,
+    approve: impl FnOnce(&[&CommandSpec]) -> bool,
+) -> AppResult<Option<Scenario>> {
     let imported = read_archive(path).map_err(|text| AppError::new("importBad").with("message", text))?;
+    let commands: Vec<&CommandSpec> =
+        imported.iter().flat_map(|Imported { scenario, .. }| scenario.commands(false)).collect();
+    if !commands.is_empty() && !approve(&commands) {
+        return Ok(None);
+    }
     let stored = imported.iter().try_for_each(|Imported { scenario, templates }| {
         store.save_scenario(scenario)?;
         for (name, bytes) in templates {
@@ -111,7 +124,7 @@ pub fn import(store: &Store, path: &Path) -> AppResult<Scenario> {
         return Err(error);
     }
     // The main scenario is the first one.
-    imported.into_iter().next().map(|main| main.scenario).ok_or_else(|| AppError::new("importBad"))
+    imported.into_iter().next().map(|main| Some(main.scenario)).ok_or_else(|| AppError::new("importBad"))
 }
 
 fn read_entry(archive: &mut ZipArchive<File>, name: &str, limit: u64) -> Result<Option<Vec<u8>>, String> {
@@ -228,7 +241,8 @@ mod tests {
 
         let file = store.root().join("demo.clickit");
         export(&store, &scenario.id, &file).unwrap();
-        let copy = import(&store, &file).unwrap();
+        // A file without commands is added without a question.
+        let copy = import(&store, &file, |_| panic!("nothing to ask about")).unwrap().unwrap();
 
         assert_ne!(copy.id, scenario.id);
         assert_ne!(copy.steps[0].id, scenario.steps[0].id);
@@ -246,9 +260,56 @@ mod tests {
         let file = store.root().join("broken.clickit");
         fs::write(&file, b"not a zip archive").unwrap();
 
-        let error = import(&store, &file).unwrap_err();
+        let error = import(&store, &file, |_| true).unwrap_err();
         assert_eq!(error.code, "importBad");
         assert_eq!(store.list_scenarios().len(), 1);
+        let _ = fs::remove_dir_all(store.root());
+    }
+
+    #[test]
+    fn a_file_with_commands_is_added_only_after_a_yes() {
+        use crate::model::graph::{Edge, Node, NodeKind, Port};
+        use crate::model::scenario::{CommandRun, OnFailure, ShellKind};
+
+        let command = |text: &str| CommandSpec {
+            run: CommandRun::Script { shell: ShellKind::Cmd, text: text.to_string() },
+            work_dir: String::new(),
+            wait: true,
+            timeout_ms: 0,
+            hidden: true,
+        };
+        let store = temp_store();
+        // The command of a scenario that is only run from the main one counts
+        // too, and so does a step that is switched off.
+        let mut callee = Scenario::new("Callee");
+        let mut off = Step::new(StepKind::Command { command: command("echo inner"), on_failure: OnFailure::Stop });
+        off.enabled = false;
+        callee.steps = vec![off];
+        store.save_scenario(&callee).unwrap();
+        let mut caller = Scenario::new_canvas("Caller");
+        let graph = caller.graph.as_mut().unwrap();
+        let run = Node::new(NodeKind::Command { command: command("echo outer") });
+        let call = Node::new(NodeKind::Call { scenario_id: callee.id.clone() });
+        graph.edges.push(Edge { from: graph.nodes[0].id.clone(), port: Port::Next, to: run.id.clone(), points: vec![] });
+        graph.edges.push(Edge { from: run.id.clone(), port: Port::Next, to: call.id.clone(), points: vec![] });
+        graph.nodes.extend([run, call]);
+        store.save_scenario(&caller).unwrap();
+        let file = store.root().join("commands.clickit");
+        export(&store, &caller.id, &file).unwrap();
+
+        let mut asked = Vec::new();
+        let declined = import(&store, &file, |commands| {
+            asked = commands.iter().map(|command| command.describe()).collect();
+            false
+        })
+        .unwrap();
+        assert!(declined.is_none());
+        assert_eq!(asked, ["[cmd]\necho outer", "[cmd]\necho inner"]);
+        assert_eq!(store.list_scenarios().len(), 2, "a no adds nothing");
+
+        let copy = import(&store, &file, |_| true).unwrap().unwrap();
+        assert_eq!(copy.name, "Caller");
+        assert_eq!(store.list_scenarios().len(), 4);
         let _ = fs::remove_dir_all(store.root());
     }
 
@@ -287,7 +348,7 @@ mod tests {
         assert_eq!(written["version"], 2);
         drop(archive);
 
-        let copy = import(&store, &file).unwrap();
+        let copy = import(&store, &file, |_| true).unwrap().unwrap();
         assert_ne!(copy.id, caller.id);
         assert_eq!(copy.version, GRAPH_VERSION);
         let called = copy.graph.as_ref().unwrap().callees();

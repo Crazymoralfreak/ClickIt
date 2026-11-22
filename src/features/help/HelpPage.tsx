@@ -84,6 +84,26 @@ const TOPICS: ReadonlyArray<HelpTopic> = [
     parts: [{ kind: "text", text: "help.ifElse.text" }],
   },
   {
+    title: "help.commands.title",
+    parts: [
+      { kind: "text", text: "help.commands.intro" },
+      {
+        kind: "list",
+        items: [
+          "help.commands.program",
+          "help.commands.script",
+          "help.commands.wait",
+          "help.commands.noWait",
+          "help.commands.stop",
+          "help.commands.hidden",
+          "help.commands.export",
+        ],
+      },
+      { kind: "text", text: "help.commands.safety" },
+      { kind: "text", text: "help.commands.ask" },
+    ],
+  },
+  {
     title: "help.canvas.title",
     parts: [
       { kind: "text", text: "help.canvas.intro" },

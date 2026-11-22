@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import type {
   AgentEntry,
   ChatInfo,
+  HarnessAsk,
   HarnessDialogEvent,
   CaptureResult,
   DataKind,
@@ -33,8 +34,8 @@ export interface AppEvents {
   "update:status": UpdateStatus;
   /** A harness saved this scenario. The open editor drops its draft and reads the file. */
   "harness:scenario": { id: string };
-  /** ClickIt is asking whether a harness may start this scenario. */
-  "harness:confirm": { requestId: number; name: string };
+  /** ClickIt is asking whether a harness may start this scenario or save new commands into it. */
+  "harness:confirm": HarnessAsk;
   /** A new line of a chat with the model. */
   "agent:entry": { chatId: string; entry: AgentEntry };
   /** The model finished its answer in this chat. */

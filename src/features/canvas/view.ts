@@ -17,7 +17,7 @@ import {
   type GraphShape,
 } from "./graph";
 
-const PORTS: ReadonlyArray<Port> = ["next", "timeout", "yes", "no", "body", "done"];
+const PORTS: ReadonlyArray<Port> = ["next", "timeout", "yes", "no", "body", "done", "error"];
 
 export function isPort(value: string | null | undefined): value is Port {
   return PORTS.some((port) => port === value);

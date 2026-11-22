@@ -3,7 +3,7 @@ import { MAX_STEP_REPEAT, type Repeat, type Step } from "../../types/scenario";
 import { Field, NumberInput, PauseInput } from "../../ui";
 import { isRepeatable, noPause } from "./defaults";
 import { useEditorEnv } from "./editorContext";
-import { IfForm, LoopForm, WaitForm } from "./FlowStepForms";
+import { CommandForm, IfForm, LoopForm, WaitForm } from "./FlowStepForms";
 import { ClickForm, DragForm, KeyForm, MoveForm, PauseForm, ScrollForm, TextForm } from "./InputStepForms";
 
 interface StepFormProps {
@@ -101,6 +101,8 @@ export function StepOwnFields({ step, onChange, disabled, block, timeoutHint }: 
       return <p className="step-form-info">{t("steps.fields.breakLoopInfo")}</p>;
     case "stop":
       return <p className="step-form-info">{t("steps.fields.stopInfo")}</p>;
+    case "command":
+      return <CommandForm step={step} onChange={onChange} disabled={disabled} env={env} />;
     default: {
       const unreachable: never = step;
       throw new Error(`Unknown step: ${String(unreachable)}`);

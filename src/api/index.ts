@@ -24,6 +24,7 @@ import type {
 } from "../types/runtime";
 import type {
   Condition,
+  Folder,
   GraphEdge,
   GraphNode,
   Queue,
@@ -67,9 +68,26 @@ export const api = {
 
   scenarioList: () => invoke<ScenarioSummary[]>("scenario_list"),
   scenarioGet: (id: string) => invoke<Scenario>("scenario_get", { id }),
-  /** A canvas scenario starts with its start block. */
-  scenarioCreate: (name: string, format: ScenarioFormat = "list") =>
-    invoke<Scenario>("scenario_create", { name, format }),
+  /** A canvas scenario starts with its start block. `folderId` puts the new scenario into a folder. */
+  scenarioCreate: (name: string, format: ScenarioFormat = "list", folderId: string | null = null) =>
+    invoke<Scenario>("scenario_create", { name, format, folderId }),
+  /** Puts a scenario into a folder; `null` is the top of the list. */
+  scenarioMove: (id: string, folderId: string | null) => invoke<void>("scenario_move", { id, folderId }),
+
+  /** Folders of the list of scenarios; the ones with the same parent come in the order they are shown. */
+  folderList: () => invoke<Folder[]>("folder_list"),
+  /** Rejects with `folderTooDeep` when the parent is already at the deepest level. */
+  folderCreate: (name: string, parentId: string | null = null) =>
+    invoke<Folder>("folder_create", { name, parentId }),
+  folderRename: (id: string, name: string) => invoke<void>("folder_rename", { id, name }),
+  /** Removes the folder only: its folders and scenarios go one level up. */
+  folderDelete: (id: string) => invoke<void>("folder_delete", { id }),
+  folderSetCollapsed: (id: string, collapsed: boolean) =>
+    invoke<void>("folder_set_collapsed", { id, collapsed }),
+  /** Puts a folder into `parentId` in front of `beforeId` (after the last one when `null`).
+   *  Resolves to the folders in their new order. */
+  folderMove: (id: string, parentId: string | null, beforeId: string | null) =>
+    invoke<Folder[]>("folder_move", { id, parentId, beforeId }),
   scenarioMeta: (id: string) => invoke<ScenarioMeta>("scenario_meta", { id }),
   /** Turns a list into a graph. With `copyName` the list stays and a new scenario gets the graph. */
   scenarioToCanvas: (id: string, copyName: string | null = null) =>
@@ -82,6 +100,11 @@ export const api = {
   /** "Check now": one look at a condition, the way a run does it. Nothing is clicked. */
   conditionCheck: (scenarioId: string, mode: ScenarioMode, target: WindowTarget, condition: Condition) =>
     invoke<CheckResult>("condition_check", { scenarioId, mode, target, condition }),
+
+  /** Opens a file dialog for the program of a "Command" step; resolves to null when cancelled. */
+  commandPickFile: () => invoke<string | null>("command_pick_file"),
+  /** Opens a folder dialog for the working folder of a "Command" step; resolves to null when cancelled. */
+  commandPickFolder: () => invoke<string | null>("command_pick_folder"),
 
   snippetList: () => invoke<Snippet[]>("snippet_list"),
   /** Saves blocks with their links and the template images of the scenario they refer to. */

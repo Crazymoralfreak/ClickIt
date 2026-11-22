@@ -231,6 +231,87 @@ pub enum RepeatMode {
     Forever,
 }
 
+/// Longest script text a step may carry, in characters.
+pub const MAX_SCRIPT_CHARS: usize = 20_000;
+/// Longest path, argument line or working folder of a command, in characters.
+pub const MAX_COMMAND_FIELD_CHARS: usize = 2_000;
+/// What the editor puts into a new "Command" step.
+pub const DEFAULT_COMMAND_TIMEOUT_MS: i64 = 60_000;
+
+/// The interpreter a script text is handed to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ShellKind {
+    #[default]
+    Cmd,
+    PowerShell,
+}
+
+/// What a "Command" step starts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase", rename_all_fields = "camelCase")]
+pub enum CommandRun {
+    /// A program or a script file with its arguments, written the way they
+    /// are typed after the name of the program in a console.
+    Program {
+        path: String,
+        #[serde(default)]
+        args: String,
+    },
+    /// Text of a script, kept in the step itself.
+    Script {
+        #[serde(default)]
+        shell: ShellKind,
+        text: String,
+    },
+}
+
+fn wait_default() -> bool {
+    true
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandSpec {
+    pub run: CommandRun,
+    /// Empty: the folder of the program, or the user's home folder for a script.
+    #[serde(default)]
+    pub work_dir: String,
+    /// Wait until the command ends. Without it the step only starts the
+    /// command and goes on; how the command ends is not looked at.
+    #[serde(default = "wait_default")]
+    pub wait: bool,
+    /// How long to wait for the end; 0 waits until the run is stopped by hand.
+    #[serde(default)]
+    pub timeout_ms: i64,
+    /// Start without a console window; what the command prints goes to the journal.
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+impl CommandSpec {
+    /// The command as text a person can read before letting it run: the
+    /// program with its arguments, or the script with the name of its interpreter.
+    pub fn describe(&self) -> String {
+        match &self.run {
+            CommandRun::Program { path, args } if args.trim().is_empty() => path.trim().to_string(),
+            CommandRun::Program { path, args } => format!("{} {}", path.trim(), args.trim()),
+            CommandRun::Script { shell: ShellKind::Cmd, text } => format!("[cmd]\n{}", text.trim()),
+            CommandRun::Script { shell: ShellKind::PowerShell, text } => format!("[PowerShell]\n{}", text.trim()),
+        }
+    }
+}
+
+/// What a "Command" step of a list does when the command could not be
+/// started, ended with a code other than 0 or ran out of time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OnFailure {
+    #[default]
+    Stop,
+    Continue,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum StepKind {
@@ -278,6 +359,12 @@ pub enum StepKind {
     BreakLoop,
     /// Ends the run like the Stop button.
     Stop,
+    /// Starts a program or a script. It runs only while commands are allowed in the settings.
+    Command {
+        command: CommandSpec,
+        #[serde(default)]
+        on_failure: OnFailure,
+    },
 }
 
 impl StepKind {
@@ -442,6 +529,18 @@ impl Scenario {
         out
     }
 
+    /// Commands of the "Command" steps and blocks, in the order of the file.
+    /// With `enabled_only` the switched-off ones, and what lies inside a
+    /// switched-off block of a list, are left out: a run never gets to them.
+    pub fn commands(&self, enabled_only: bool) -> Vec<&CommandSpec> {
+        let mut out = Vec::new();
+        collect_commands(&self.steps, enabled_only, &mut out);
+        if let Some(graph) = &self.graph {
+            graph.collect_commands(enabled_only, &mut out);
+        }
+        out
+    }
+
     /// Fills steps and blocks the caller left without an id, including nested ones.
     pub fn fill_empty_ids(&mut self) {
         fill_empty_ids(&mut self.steps);
@@ -483,6 +582,20 @@ fn collect_templates(steps: &[Step], out: &mut Vec<String>) {
     }
 }
 
+fn collect_commands<'a>(steps: &'a [Step], enabled_only: bool, out: &mut Vec<&'a CommandSpec>) {
+    for step in steps {
+        if enabled_only && !step.enabled {
+            continue;
+        }
+        if let StepKind::Command { command, .. } = &step.kind {
+            out.push(command);
+        }
+        for list in step.children() {
+            collect_commands(list, enabled_only, out);
+        }
+    }
+}
+
 fn fill_empty_ids(steps: &mut [Step]) {
     for step in steps {
         if step.id.is_empty() {
@@ -503,7 +616,8 @@ fn fill_empty_ids(steps: &mut [Step]) {
             | StepKind::Pause { .. }
             | StepKind::Wait { .. }
             | StepKind::BreakLoop
-            | StepKind::Stop => {}
+            | StepKind::Stop
+            | StepKind::Command { .. } => {}
         }
     }
 }
@@ -566,6 +680,56 @@ mod tests {
         assert_eq!(count_steps(std::slice::from_ref(&step)), 3);
         let value = serde_json::to_value(&step).unwrap();
         assert_eq!(value["steps"][0]["type"], "breakLoop");
+    }
+
+    #[test]
+    fn a_command_step_parses_with_its_defaults_and_is_found_in_nested_steps() {
+        let script = r#"{
+            "id": "s7", "type": "command",
+            "command": {
+                "run": { "kind": "script", "shell": "powershell", "text": "Get-Date" },
+                "workDir": "", "wait": true, "timeoutMs": 60000, "hidden": true
+            },
+            "onFailure": "continue"
+        }"#;
+        let step: Step = serde_json::from_str(script).unwrap();
+        let StepKind::Command { command, on_failure } = &step.kind else { panic!() };
+        assert_eq!(command.run, CommandRun::Script { shell: ShellKind::PowerShell, text: "Get-Date".into() });
+        assert_eq!((command.wait, command.timeout_ms, command.hidden), (true, 60_000, true));
+        assert_eq!(*on_failure, OnFailure::Continue);
+        assert_eq!(command.describe(), "[PowerShell]\nGet-Date");
+        assert!(!step.kind.is_repeatable() && !step.kind.is_input());
+        let value = serde_json::to_value(&step).unwrap();
+        assert_eq!(value["command"]["run"]["shell"], "powershell");
+        assert_eq!(serde_json::from_value::<Step>(value).unwrap(), step);
+
+        // Only what to start is required: the rest waits for the end, without a limit, and stops on a failure.
+        let program = r#"{ "type": "command", "command": { "run": { "kind": "program", "path": "notepad.exe" } } }"#;
+        let plain: Step = serde_json::from_str(program).unwrap();
+        let StepKind::Command { command, on_failure } = &plain.kind else { panic!() };
+        assert_eq!(command.run, CommandRun::Program { path: "notepad.exe".into(), args: String::new() });
+        assert_eq!((command.wait, command.timeout_ms, command.hidden), (true, 0, false));
+        assert_eq!(*on_failure, OnFailure::Stop);
+        assert_eq!(command.describe(), "notepad.exe");
+        let cmd = r#"{ "run": { "kind": "script", "text": "dir" } }"#;
+        assert_eq!(serde_json::from_str::<CommandSpec>(cmd).unwrap().describe(), "[cmd]\ndir");
+
+        let mut off = plain.clone();
+        off.enabled = false;
+        let mut block = Step::new(StepKind::Loop {
+            mode: LoopMode::Forever,
+            pause_between: Pause::default(),
+            steps: vec![step.clone(), off],
+        });
+        let mut scenario = Scenario::new("t");
+        scenario.steps = vec![plain, block.clone()];
+        assert_eq!(scenario.commands(false).len(), 3);
+        assert_eq!(scenario.commands(true).len(), 2);
+        // Nothing inside a switched-off block runs.
+        block.enabled = false;
+        scenario.steps[1] = block;
+        assert_eq!(scenario.commands(true).len(), 1);
+        assert_eq!(scenario.commands(false).len(), 3);
     }
 
     #[test]

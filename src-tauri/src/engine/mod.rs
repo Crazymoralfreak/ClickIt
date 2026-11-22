@@ -12,6 +12,7 @@
 //! A list of steps is walked as a tree, a graph block by block along its
 //! links. Both use the same actions, waits, pauses and guards.
 
+pub mod command;
 pub mod conditions;
 pub mod timing;
 
@@ -29,8 +30,8 @@ use crate::journal::Journal;
 use crate::model::graph::{counter_port, Follow, Graph, Node, NodeKind, Port, Wiring, MAX_CALL_DEPTH};
 use crate::model::queue::OnItemFailure;
 use crate::model::scenario::{
-    ClickAction, Condition, KeyAction, LoopMode, Modifiers, MouseButton, OnFound, OnTimeout, Pause, Position,
-    RepeatMode, Scenario, ScenarioMode, ScrollDirection, Step, StepKind,
+    ClickAction, CommandSpec, Condition, KeyAction, LoopMode, Modifiers, MouseButton, OnFailure, OnFound, OnTimeout,
+    Pause, Position, RepeatMode, Scenario, ScenarioMode, ScrollDirection, Step, StepKind,
 };
 use crate::model::schedule::{RunTarget, TargetKind};
 use crate::model::validate::{has_errors, parse_color, validate_queue};
@@ -135,6 +136,16 @@ pub struct Plan {
     pub callees: HashMap<String, Arc<Callee>>,
 }
 
+impl Plan {
+    /// Commands the run may start: the enabled "Command" steps and blocks of
+    /// every item and of every scenario the items run.
+    pub fn commands(&self) -> Vec<&CommandSpec> {
+        let items = self.items.iter().map(|item| &item.scenario);
+        let callees = self.callees.values().map(|callee| &callee.scenario);
+        items.chain(callees).flat_map(|scenario| scenario.commands(true)).collect()
+    }
+}
+
 /// Reads the scenarios `scenario` runs, directly and through others. The
 /// checks have already made sure they exist and do not lead back.
 fn load_callees(store: &Store, scenario: &Scenario, into: &mut HashMap<String, Arc<Callee>>) {
@@ -230,6 +241,9 @@ pub struct RunOptions {
     /// A trial run of a graph scenario: one pass from this block.
     pub start_node: Option<String>,
     pub debug: Option<Debug>,
+    /// The "Command" steps may start programs and scripts. Without it a run
+    /// that reaches such a step fails.
+    pub allow_commands: bool,
     #[cfg(test)]
     pub probe: Option<Probe>,
 }
@@ -244,6 +258,7 @@ impl RunOptions {
             blocked: Vec::new(),
             start_node: None,
             debug: None,
+            allow_commands: false,
             #[cfg(test)]
             probe: None,
         }
@@ -483,6 +498,9 @@ struct Runner<'a> {
     work: u64,
     blocked_checked: Option<Instant>,
     blocked_found: Option<String>,
+    /// Why the command of the block that was just run failed; the pass is
+    /// about to leave that block through `error`.
+    command_failure: Option<AppError>,
 }
 
 impl<'a> Runner<'a> {
@@ -513,6 +531,7 @@ impl<'a> Runner<'a> {
             work: 0,
             blocked_checked: None,
             blocked_found: None,
+            command_failure: None,
         }
     }
 
@@ -920,6 +939,14 @@ impl<'a> Runner<'a> {
             StepKind::Loop { mode, pause_between, steps } => self.run_loop(mode, *pause_between, steps)?,
             StepKind::BreakLoop => return Ok(Flow::Break),
             StepKind::Stop => return Err(Halt::StopStep(AppError::new("stopStep").with("step", self.label()))),
+            StepKind::Command { command, on_failure } => {
+                if let Some(failure) = self.run_command(command)? {
+                    match on_failure {
+                        OnFailure::Stop => return Err(Halt::Fail(failure)),
+                        OnFailure::Continue => self.pass_failure(&failure),
+                    }
+                }
+            }
             StepKind::Click { .. }
             | StepKind::Move { .. }
             | StepKind::Drag { .. }
@@ -1110,9 +1137,79 @@ impl<'a> Runner<'a> {
             | StepKind::If { .. }
             | StepKind::Loop { .. }
             | StepKind::BreakLoop
-            | StepKind::Stop => {}
+            | StepKind::Stop
+            | StepKind::Command { .. } => {}
         }
         Ok(Attempt::Done)
+    }
+
+    // Commands
+
+    /// Starts the command of a step or of a block and, when the command is to
+    /// be waited for, waits until it ends. `Some` is a failure: the command
+    /// did not start, ended with a code other than 0 or ran out of time. What
+    /// a failure leads to is up to the step or to the links of the block.
+    ///
+    /// The guards of the input actions do not apply: a command does not need
+    /// the target window in front. A stop ends the command at once.
+    fn run_command(&mut self, spec: &CommandSpec) -> Exec<Option<AppError>> {
+        if !self.options.allow_commands {
+            return Err(self.fail("commandsDisabled"));
+        }
+        self.check_stop()?;
+        self.worked();
+        self.engine.hub.flush();
+        self.trace_flush();
+        let step = self.label();
+        let place = [("name", self.scenario().name.clone()), ("step", step.clone())];
+        let failure = |code: &str| AppError::new(code).with("step", &step);
+
+        let mut launch = match command::start(spec) {
+            Ok(launch) => launch,
+            Err(message) => return Ok(Some(failure("commandStartFailed").with("message", message))),
+        };
+        if !spec.wait {
+            launch.detach();
+            self.engine.journal.add("commandStarted", &place);
+            return Ok(None);
+        }
+        let limit = (spec.timeout_ms > 0).then(|| Duration::from_millis(spec.timeout_ms as u64));
+        let started = Instant::now();
+        let ended = loop {
+            match launch.poll() {
+                Ok(Some(code)) => break Ok(code),
+                Ok(None) => {}
+                Err(message) => break Err(failure("commandStartFailed").with("message", message)),
+            }
+            if let Err(halt) = self.check_stop() {
+                launch.kill();
+                return Err(halt);
+            }
+            if limit.is_some_and(|limit| started.elapsed() >= limit) {
+                break Err(failure("commandTimeout"));
+            }
+            thread::sleep(SLICE);
+        };
+        if ended.is_err() {
+            launch.kill();
+        }
+        let output = launch.output();
+        if !output.is_empty() {
+            self.engine.journal.add("commandOutput", &[place[0].clone(), place[1].clone(), ("output", output)]);
+        }
+        match ended {
+            Ok(0) => {
+                self.engine.journal.add("commandDone", &place);
+                Ok(None)
+            }
+            Ok(code) => Ok(Some(failure("commandFailed").with("code", code))),
+            Err(error) => Ok(Some(error)),
+        }
+    }
+
+    /// Notes a failure of a command the scenario goes on after.
+    fn pass_failure(&self, failure: &AppError) {
+        self.engine.journal.add_with_reason("commandPassed", &[("name", self.scenario().name.clone())], failure);
     }
 
     fn key(&mut self, key: &str, action: KeyAction, modifiers: Modifiers) -> Exec<()> {
@@ -1457,18 +1554,25 @@ impl<'a> Runner<'a> {
         self.trace_enter(&node.id);
     }
 
-    /// The block the output leads to; `None` ends the pass. A `timeout`
-    /// output without a link fails the scenario.
+    /// The block the output leads to; `None` ends the pass. A `timeout` or an
+    /// `error` output without a link fails the scenario.
     fn follow(&mut self, graph: &Graph, wiring: &Wiring, from: usize, port: Port) -> Exec<Option<usize>> {
         let next = wiring.follow(from, port);
         let to = match next {
             Follow::To(index) => Some(index),
-            Follow::End | Follow::Timeout => None,
+            Follow::End | Follow::Timeout | Follow::Error => None,
         };
         self.trace_move(&graph.nodes[from].id, port, to.map(|index| graph.nodes[index].id.as_str()));
+        let failure = self.command_failure.take().filter(|_| port == Port::Error);
         match next {
             Follow::Timeout => Err(self.fail("conditionTimeout")),
-            Follow::To(_) | Follow::End => Ok(to),
+            Follow::Error => Err(failure.map(Halt::Fail).unwrap_or_else(|| self.fail("commandFailed"))),
+            Follow::To(_) | Follow::End => {
+                if let Some(failure) = failure {
+                    self.pass_failure(&failure);
+                }
+                Ok(to)
+            }
         }
     }
 
@@ -1553,6 +1657,16 @@ impl<'a> Runner<'a> {
             NodeKind::Call { scenario_id } => {
                 self.run_call_block(node, scenario_id)?;
                 Ok(Port::Next)
+            }
+            NodeKind::Command { command } => {
+                self.trace_phase(Phase::Action, limit(command.timeout_ms));
+                Ok(match self.run_command(command)? {
+                    None => Port::Next,
+                    Some(failure) => {
+                        self.command_failure = Some(failure);
+                        Port::Error
+                    }
+                })
             }
             // A start block only passes on. An intercept is entered through its
             // branch, never along a link; the actions were handled above.
@@ -1867,6 +1981,7 @@ impl<'a> Runner<'a> {
 mod tests {
     use super::*;
     use crate::model::graph::Edge;
+    use crate::model::scenario::{CommandRun, ShellKind};
     use crate::runtime::JournalEntry;
     use std::sync::mpsc::{self, Receiver};
 
@@ -2443,5 +2558,208 @@ mod tests {
         assert_eq!(bench.run(list, vec![], options()).outcome, Outcome::Completed);
         assert!(bench.engine.trace("plain").is_none());
         assert!(lock(&bench.traces).is_empty());
+    }
+
+    // Commands. The scripts are run by cmd without a window.
+
+    fn script(text: &str, timeout_ms: i64) -> CommandSpec {
+        CommandSpec {
+            run: CommandRun::Script { shell: ShellKind::Cmd, text: text.to_string() },
+            work_dir: String::new(),
+            wait: true,
+            timeout_ms,
+            hidden: true,
+        }
+    }
+
+    fn command_step(command: CommandSpec, on_failure: OnFailure) -> Step {
+        Step::new(StepKind::Command { command, on_failure })
+    }
+
+    fn list(id: &str, steps: Vec<Step>) -> Scenario {
+        let mut scenario = Scenario::new(id);
+        scenario.id = id.to_string();
+        scenario.steps = steps;
+        scenario
+    }
+
+    /// A run that may start commands.
+    fn allowed() -> RunOptions {
+        let mut options = options();
+        options.allow_commands = true;
+        options
+    }
+
+    fn param<'a>(entry: &'a JournalEntry, key: &str) -> Option<&'a str> {
+        entry.params.get(key).map(String::as_str)
+    }
+
+    #[test]
+    fn a_command_is_not_started_while_commands_are_switched_off() {
+        let bench = Bench::new();
+        let marker = bench.dir.join("ran.txt");
+        let mut command = script("echo 1>ran.txt", 0);
+        command.work_dir = bench.dir.to_string_lossy().into_owned();
+        let steps = vec![command_step(command, OnFailure::Continue)];
+        let finished = bench.run(list("off", steps), vec![], options());
+        assert_eq!(finished.outcome, Outcome::Failed);
+        assert_eq!(finished.reason.unwrap().code, "commandsDisabled");
+        assert!(!marker.exists());
+    }
+
+    #[test]
+    fn a_code_other_than_zero_fails_a_list_unless_the_step_goes_on() {
+        let bench = Bench::new();
+        let strict = list("strict", vec![command_step(script("exit /b 3", 0), OnFailure::Stop)]);
+        let finished = bench.run(strict, vec![], allowed());
+        assert_eq!(finished.outcome, Outcome::Failed);
+        let reason = finished.reason.unwrap();
+        assert_eq!(reason.code, "commandFailed");
+        assert_eq!(reason.params.get("code").map(String::as_str), Some("3"));
+        assert_eq!(reason.params.get("step").map(String::as_str), Some("1"));
+
+        let lenient = list(
+            "lenient",
+            vec![
+                command_step(script("exit /b 3", 0), OnFailure::Continue),
+                command_step(script("exit /b 0", 0), OnFailure::Stop),
+            ],
+        );
+        let finished = bench.run(lenient, vec![], allowed());
+        assert_eq!(finished.outcome, Outcome::Completed);
+        let passed = bench.journal("commandPassed");
+        assert_eq!(passed.len(), 1);
+        assert_eq!(param(&passed[0], "reason"), Some("commandFailed"));
+        assert_eq!(param(&passed[0], "code"), Some("3"));
+        assert_eq!(param(&passed[0], "step"), Some("1"));
+        let done = bench.journal("commandDone");
+        assert_eq!(done.len(), 1);
+        assert_eq!(param(&done[0], "step"), Some("2"));
+    }
+
+    #[test]
+    fn what_a_hidden_command_prints_goes_to_the_journal() {
+        let bench = Bench::new();
+        let steps = vec![command_step(script("echo Привет, мир", 0), OnFailure::Stop)];
+        let finished = bench.run(list("talk", steps), vec![], allowed());
+        assert_eq!(finished.outcome, Outcome::Completed);
+        let printed = bench.journal("commandOutput");
+        assert_eq!(printed.len(), 1);
+        assert_eq!(param(&printed[0], "output"), Some("Привет, мир"));
+        assert_eq!(param(&printed[0], "name"), Some("talk"));
+    }
+
+    #[test]
+    fn a_program_gets_its_arguments_and_one_that_is_not_there_fails_the_step() {
+        let bench = Bench::new();
+        let program = |path: &str, args: &str| CommandSpec {
+            run: CommandRun::Program { path: path.to_string(), args: args.to_string() },
+            ..script("", 0)
+        };
+        let steps = vec![command_step(program("cmd.exe", "/d /c exit 5"), OnFailure::Stop)];
+        let finished = bench.run(list("program", steps), vec![], allowed());
+        let reason = finished.reason.unwrap();
+        assert_eq!(reason.code, "commandFailed");
+        assert_eq!(reason.params.get("code").map(String::as_str), Some("5"));
+
+        let missing = bench.dir.join("nothing-here.exe").to_string_lossy().into_owned();
+        let steps = vec![command_step(program(&missing, ""), OnFailure::Stop)];
+        let finished = bench.run(list("missing", steps), vec![], allowed());
+        assert_eq!(finished.outcome, Outcome::Failed);
+        let reason = finished.reason.unwrap();
+        assert_eq!(reason.code, "commandStartFailed");
+        assert!(reason.params.get("message").is_some_and(|message| !message.is_empty()));
+    }
+
+    #[test]
+    fn a_failed_command_block_leaves_through_error_and_fails_when_nothing_is_linked_there() {
+        let graph = |id: &str, with_error: bool| {
+            let mut edges = vec![edge("s", Port::Next, "c"), edge("c", Port::Next, "fine")];
+            if with_error {
+                edges.push(edge("c", Port::Error, "broken"));
+            }
+            canvas(
+                id,
+                vec![
+                    node("s", NodeKind::Start),
+                    node("c", NodeKind::Command { command: script("exit /b 2", 0) }),
+                    tick("fine"),
+                    tick("broken"),
+                ],
+                edges,
+            )
+        };
+        let bench = Bench::new();
+        let finished = bench.run(graph("linked", true), vec![], allowed());
+        assert_eq!(finished.outcome, Outcome::Completed);
+        let trace = bench.trace("linked");
+        assert_eq!(passes(&trace, "broken"), 1);
+        assert_eq!(passes(&trace, "fine"), 0);
+        assert_eq!(trace.outcomes.get("c"), Some(&Port::Error));
+        assert_eq!(bench.journal("commandPassed").len(), 1);
+
+        let finished = bench.run(graph("unlinked", false), vec![], allowed());
+        assert_eq!(finished.outcome, Outcome::Failed);
+        let reason = finished.reason.unwrap();
+        assert_eq!(reason.code, "commandFailed");
+        assert_eq!(reason.params.get("code").map(String::as_str), Some("2"));
+        assert_eq!(passes(&bench.trace("unlinked"), "fine"), 0);
+        // Only the failure that was passed over is noted as such.
+        assert_eq!(bench.journal("commandPassed").len(), 1);
+    }
+
+    /// A script whose child writes `late.txt` about a second after the start.
+    fn slow(bench: &Bench, timeout_ms: i64) -> (CommandSpec, PathBuf) {
+        let mut command = script("cmd /d /c \"ping -n 2 127.0.0.1 >nul & echo 1>late.txt\"", timeout_ms);
+        command.work_dir = bench.dir.to_string_lossy().into_owned();
+        (command, bench.dir.join("late.txt"))
+    }
+
+    #[test]
+    fn a_timeout_ends_the_command_with_everything_it_started() {
+        let bench = Bench::new();
+        // Left alone, the child gets to its file.
+        let (command, late) = slow(&bench, 0);
+        let finished = bench.run(list("patient", vec![command_step(command, OnFailure::Stop)]), vec![], allowed());
+        assert_eq!(finished.outcome, Outcome::Completed);
+        assert!(late.exists());
+        std::fs::remove_file(&late).unwrap();
+
+        let (command, late) = slow(&bench, 200);
+        let finished = bench.run(list("hasty", vec![command_step(command, OnFailure::Stop)]), vec![], allowed());
+        assert_eq!(finished.outcome, Outcome::Failed);
+        assert_eq!(finished.reason.unwrap().code, "commandTimeout");
+        thread::sleep(Duration::from_millis(1500));
+        assert!(!late.exists());
+    }
+
+    #[test]
+    fn a_stop_ends_a_command_that_is_waited_for() {
+        let bench = Bench::new();
+        let steps = vec![command_step(script("ping -n 60 127.0.0.1 >nul", 0), OnFailure::Continue)];
+        bench.start(list("long", steps), vec![], allowed());
+        thread::sleep(Duration::from_millis(300));
+        let asked = Instant::now();
+        bench.engine.stop(AppError::new("userStop"));
+        let finished = bench.end();
+        assert_eq!(finished.outcome, Outcome::Stopped);
+        assert_eq!(finished.reason.unwrap().code, "userStop");
+        assert!(asked.elapsed() < Duration::from_secs(3));
+    }
+
+    #[test]
+    fn a_command_that_is_not_waited_for_outlives_the_step() {
+        let bench = Bench::new();
+        let (mut command, late) = slow(&bench, 0);
+        command.wait = false;
+        let finished = bench.run(list("apart", vec![command_step(command, OnFailure::Stop)]), vec![], allowed());
+        assert_eq!(finished.outcome, Outcome::Completed);
+        assert_eq!(bench.journal("commandStarted").len(), 1);
+        assert!(bench.journal("commandDone").is_empty());
+        let deadline = Instant::now() + WAIT;
+        while !late.exists() {
+            assert!(Instant::now() < deadline, "the command did not go on after the step");
+            thread::sleep(Duration::from_millis(50));
+        }
     }
 }

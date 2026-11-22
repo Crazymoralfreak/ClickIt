@@ -3,6 +3,7 @@ import { useT } from "../../i18n";
 import type { Issue } from "../../types/runtime";
 import type { QueueItem, ScenarioSummary } from "../../types/scenario";
 import { Button, NumberInput, Select, cx, type Option } from "../../ui";
+import { scenarioChoices } from "../scenarios/folderTree";
 
 function newItemId(): string {
   const random = Math.floor(Math.random() * 0x1000000)
@@ -26,7 +27,7 @@ export function QueueItems({ items, scenarios, issues, disabled, onChange }: Que
   const { t, td } = useT();
 
   const scenarioOptions = useMemo<Option<string>[]>(
-    () => (scenarios ?? []).map((scenario) => ({ value: scenario.id, label: scenario.name })),
+    () => scenarioChoices(scenarios ?? []).map(({ item, label }) => ({ value: item.id, label })),
     [scenarios],
   );
 

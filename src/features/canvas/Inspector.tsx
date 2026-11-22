@@ -15,10 +15,12 @@ import {
   type WaitStep,
 } from "../../types/scenario";
 import { Button, Checkbox, Field, NumberInput, PauseInput, Segmented, Select, TextInput, cx, type Option } from "../../ui";
+import { CommandFields } from "../editor/CommandFields";
 import { ConditionEditor } from "../editor/ConditionEditor";
 import { useEditorEnv } from "../editor/editorContext";
 import { WindowPicker } from "../editor/WindowPicker";
 import { RepeatFields, StepOwnFields } from "../editor/StepForm";
+import { scenarioChoices } from "../scenarios/folderTree";
 import { portLabel, typeName } from "./blockText";
 import { NOTE_COLORS } from "./canvasContext";
 import { BlockIcon } from "./icons";
@@ -209,7 +211,10 @@ function BlockFields({ node, onChange, disabled, scenarios }: BlockFieldsProps) 
     case "call": {
       const options: Array<Option<string>> = [
         { value: "", label: t("canvas.inspector.callNone") },
-        ...scenarios.filter((item) => item.id !== env.scenarioId).map((item) => ({ value: item.id, label: item.name })),
+        ...scenarioChoices(scenarios.filter((item) => item.id !== env.scenarioId)).map(({ item, label }) => ({
+          value: item.id,
+          label,
+        })),
       ];
       const known = node.scenarioId === "" || options.some((option) => option.value === node.scenarioId);
       if (!known) {
@@ -263,6 +268,17 @@ function BlockFields({ node, onChange, disabled, scenarios }: BlockFieldsProps) 
               onChange={(minIntervalMs) => onChange({ ...node, minIntervalMs })}
             />
           </Field>
+        </>
+      );
+    case "command":
+      return (
+        <>
+          <CommandFields
+            value={node.command}
+            disabled={disabled}
+            onChange={(command) => onChange({ ...node, command })}
+          />
+          <p className="field-hint">{t("canvas.inspector.commandHint")}</p>
         </>
       );
     default: {

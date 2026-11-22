@@ -7,8 +7,8 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use super::scenario::{
-    new_id, ClickAction, Condition, KeyAction, LoopMode, Modifiers, MouseButton, OnFound, OnTimeout, Pause, Position,
-    Repeat, ScrollDirection, Step, StepKind, WindowTarget,
+    new_id, ClickAction, CommandSpec, Condition, KeyAction, LoopMode, Modifiers, MouseButton, OnFailure, OnFound,
+    OnTimeout, Pause, Position, Repeat, ScrollDirection, Step, StepKind, WindowTarget,
 };
 
 /// Written into a scenario that holds a graph. Lists keep version 1.
@@ -37,6 +37,8 @@ pub enum Port {
     No,
     Body,
     Done,
+    /// Where a "Command" block sends the pass when its command failed.
+    Error,
 }
 
 impl Port {
@@ -48,7 +50,13 @@ impl Port {
             Port::No => "no",
             Port::Body => "body",
             Port::Done => "done",
+            Port::Error => "error",
         }
+    }
+
+    /// An output that fails the scenario when nothing is linked to it, instead of ending the pass.
+    pub fn fails_unlinked(self) -> bool {
+        matches!(self, Port::Timeout | Port::Error)
     }
 }
 
@@ -136,6 +144,12 @@ pub enum NodeKind {
         #[serde(default = "default_intercept_ms")]
         min_interval_ms: i64,
     },
+    /// Starts a program or a script. A command that could not be started,
+    /// ended with a code other than 0 or ran out of time leaves through
+    /// `error`; an unwired `error` output fails the scenario.
+    Command {
+        command: CommandSpec,
+    },
 }
 
 fn default_intercept_ms() -> i64 {
@@ -147,6 +161,7 @@ impl NodeKind {
     pub fn ports(&self) -> &'static [Port] {
         match self {
             NodeKind::Wait { .. } => &[Port::Next, Port::Timeout],
+            NodeKind::Command { .. } => &[Port::Next, Port::Error],
             NodeKind::Branch { .. } => &[Port::Yes, Port::No],
             NodeKind::Counter { .. } | NodeKind::While { .. } => &[Port::Body, Port::Done],
             NodeKind::Stop => &[],
@@ -196,7 +211,8 @@ impl NodeKind {
             | NodeKind::While { .. }
             | NodeKind::Focus { .. }
             | NodeKind::Call { .. }
-            | NodeKind::Intercept { .. } => return None,
+            | NodeKind::Intercept { .. }
+            | NodeKind::Command { .. } => return None,
         })
     }
 
@@ -225,6 +241,7 @@ impl NodeKind {
             StepKind::Wait { condition, poll_ms, timeout_ms, on_found, .. } => {
                 NodeKind::Wait { condition, poll_ms, timeout_ms, on_found }
             }
+            StepKind::Command { command, .. } => NodeKind::Command { command },
             StepKind::If { .. } | StepKind::Loop { .. } | StepKind::BreakLoop => return None,
         })
     }
@@ -346,6 +363,8 @@ pub enum Follow {
     End,
     /// The `timeout` output is not linked: the scenario fails.
     Timeout,
+    /// The `error` output is not linked: the scenario fails with what went wrong with the command.
+    Error,
 }
 
 /// Which output a counter block takes after `passed` passes into its body.
@@ -376,6 +395,7 @@ impl Wiring {
         match self.target(from, port) {
             Some(to) => Follow::To(to),
             None if port == Port::Timeout => Follow::Timeout,
+            None if port == Port::Error => Follow::Error,
             None => Follow::End,
         }
     }
@@ -465,6 +485,17 @@ impl Graph {
         for node in &self.nodes {
             if let Some(condition) = node.kind.condition() {
                 condition.collect_templates(out);
+            }
+        }
+    }
+
+    /// Commands of the "Command" blocks; with `enabled_only`, without the switched-off ones.
+    pub fn collect_commands<'a>(&'a self, enabled_only: bool, out: &mut Vec<&'a CommandSpec>) {
+        for node in &self.nodes {
+            if let NodeKind::Command { command } = &node.kind {
+                if node.enabled || !enabled_only {
+                    out.push(command);
+                }
             }
         }
     }
@@ -664,7 +695,7 @@ impl Graph {
             }
         }
         let ends_inside = self.nodes.iter().filter(|node| inside(&node.id)).any(|node| {
-            node.kind.ports().iter().filter(|port| **port != Port::Timeout).any(|port| {
+            node.kind.ports().iter().filter(|port| !port.fails_unlinked()).any(|port| {
                 !self.edges.iter().any(|edge| edge.from == node.id && edge.port == *port)
             })
         });
@@ -819,6 +850,10 @@ impl Builder {
             StepKind::Wait { on_timeout: OnTimeout::Continue, .. } => {
                 vec![(id.clone(), Port::Next), (id.clone(), Port::Timeout)]
             }
+            // A command that may fail goes on either way; one that may not leaves `error` unlinked.
+            StepKind::Command { on_failure: OnFailure::Continue, .. } => {
+                vec![(id.clone(), Port::Next), (id.clone(), Port::Error)]
+            }
             _ => vec![(id.clone(), Port::Next)],
         };
         Piece { entry: Some(id), open }
@@ -928,7 +963,7 @@ pub fn from_steps(steps: &[Step]) -> Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::scenario::Area;
+    use crate::model::scenario::{Area, CommandRun};
 
     fn click() -> Step {
         Step::new(StepKind::Click {
@@ -1013,6 +1048,46 @@ mod tests {
         let graph = from_steps(&[wait(OnTimeout::Continue), click()]);
         assert_eq!(walk(&graph, &[Port::Next, Port::Next]), walk(&graph, &[Port::Next, Port::Timeout]));
         assert!(matches!(walk(&graph, &[Port::Next, Port::Timeout]), Follow::To(_)));
+    }
+
+    fn command(on_failure: OnFailure) -> Step {
+        Step::new(StepKind::Command {
+            command: CommandSpec {
+                run: CommandRun::Program { path: "tool.exe".into(), args: "--once".into() },
+                work_dir: String::new(),
+                wait: true,
+                timeout_ms: 0,
+                hidden: false,
+            },
+            on_failure,
+        })
+    }
+
+    #[test]
+    fn a_command_keeps_what_it_does_on_a_failure() {
+        // "Stop on a failure": nothing is linked to `error`, so a failure fails the scenario.
+        let strict = command(OnFailure::Stop);
+        let StepKind::Command { command: spec, .. } = &strict.kind else { unreachable!() };
+        let spec = spec.clone();
+        let graph = from_steps(&[strict, click()]);
+        assert_eq!(graph.nodes[1].kind, NodeKind::Command { command: spec });
+        assert!(matches!(walk(&graph, &[Port::Next, Port::Next]), Follow::To(_)));
+        assert_eq!(walk(&graph, &[Port::Next, Port::Error]), Follow::Error);
+
+        // "Go on": both outputs lead to the next block.
+        let graph = from_steps(&[command(OnFailure::Continue), click()]);
+        assert!(matches!(walk(&graph, &[Port::Next, Port::Error]), Follow::To(_)));
+        assert_eq!(walk(&graph, &[Port::Next, Port::Next]), walk(&graph, &[Port::Next, Port::Error]));
+
+        let json = r#"{ "id": "n2", "type": "command",
+            "command": { "run": { "kind": "script", "shell": "cmd", "text": "echo 1" } } }"#;
+        let node: Node = serde_json::from_str(json).unwrap();
+        assert_eq!(node.kind.ports(), &[Port::Next, Port::Error]);
+        assert_eq!(node.kind.skip_port(), Port::Next);
+        assert_eq!(serde_json::to_value(Port::Error).unwrap(), "error");
+        let mut found = Vec::new();
+        graph.collect_commands(true, &mut found);
+        assert_eq!(found.len(), 1);
     }
 
     #[test]

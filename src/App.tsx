@@ -18,7 +18,15 @@ import { ScenariosPage } from "./features/scenarios/ScenariosPage";
 import { SchedulePage } from "./features/schedule/SchedulePage";
 import { SettingsPage } from "./features/settings/SettingsPage";
 import { I18nProvider, translate, useT, type TKey } from "./i18n";
-import type { AppError, AppInfo, DataKind, RunOptions, RunStatus, UpdateStatus } from "./types/runtime";
+import type {
+  AppError,
+  AppInfo,
+  DataKind,
+  HarnessAsk,
+  RunOptions,
+  RunStatus,
+  UpdateStatus,
+} from "./types/runtime";
 import type { Language, RunTarget, Settings } from "./types/scenario";
 import { Button, Modal, TextInput, cx } from "./ui";
 
@@ -91,7 +99,7 @@ function MainWindow({ boot }: { boot: Boot }) {
   });
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [dialog, setDialog] = useState<Dialog | null>(null);
-  const [harnessConfirm, setHarnessConfirm] = useState<{ requestId: number; name: string } | null>(null);
+  const [harnessConfirm, setHarnessConfirm] = useState<HarnessAsk | null>(null);
 
   const language: Language = settings.language ?? boot.info.systemLanguage;
   const languageRef = useRef(language);
@@ -418,32 +426,61 @@ function PageView({ page }: { page: Page }) {
   }
 }
 
-function HarnessConfirm({
-  request,
-  onDone,
-}: {
-  request: { requestId: number; name: string };
-  onDone: () => void;
-}) {
+/** The words of the question for each thing a harness may ask about. */
+function harnessAskKeys(kind: HarnessAsk["kind"]): { title: TKey; text: TKey; ok: TKey } {
+  switch (kind) {
+    case "run":
+      return { title: "harness.confirmTitle", text: "harness.confirmText", ok: "harness.confirmOk" };
+    case "save":
+      return { title: "harness.saveTitle", text: "harness.saveText", ok: "harness.saveOk" };
+    default: {
+      const unreachable: never = kind;
+      throw new Error(`Unknown question: ${String(unreachable)}`);
+    }
+  }
+}
+
+function HarnessConfirm({ request, onDone }: { request: HarnessAsk; onDone: () => void }) {
   const { t } = useT();
   const finish = (accepted: boolean) => {
     onDone();
     void api.harnessReply(request.requestId, accepted).catch(() => undefined);
   };
+  const keys = harnessAskKeys(request.kind);
+  const withCommands = request.commands.length > 0;
   return (
     <Modal
-      title={t("harness.confirmTitle")}
+      title={t(keys.title)}
+      wide={withCommands}
       onClose={() => finish(false)}
       footer={
         <>
-          <Button onClick={() => finish(false)}>{t("common.cancel")}</Button>
-          <Button variant="primary" autoFocus onClick={() => finish(true)}>
-            {t("harness.confirmOk")}
+          {/* With commands the safe answer is the one a stray Enter gives. */}
+          <Button autoFocus={withCommands} onClick={() => finish(false)}>
+            {t("common.cancel")}
+          </Button>
+          <Button variant="primary" autoFocus={!withCommands} onClick={() => finish(true)}>
+            {t(keys.ok)}
           </Button>
         </>
       }
     >
-      <p className="modal-text">{t("harness.confirmText", { name: request.name })}</p>
+      <p className="modal-text">{t(keys.text, { name: request.name })}</p>
+      {withCommands ? (
+        <>
+          {request.kind === "run" ? <p className="modal-text">{t("harness.confirmRunCommands")}</p> : null}
+          <ul className="ask-commands">
+            {request.commands.map((command) => (
+              <li key={`${command.workDir}\n${command.text}`} className="ask-command">
+                <pre className="ask-command-text">{command.text}</pre>
+                {command.workDir ? (
+                  <span className="ask-command-folder">{t("harness.commandFolder", { folder: command.workDir })}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </Modal>
   );
 }

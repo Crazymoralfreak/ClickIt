@@ -1,11 +1,20 @@
 // Dictionaries and the translation hook. `ru.json` defines the key set;
-// `en.json` must have exactly the same shape (checked by the compiler below).
+// every other dictionary must have exactly the same shape (checked by the compiler below).
 
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { AppError } from "../types/runtime";
 import type { Language } from "../types/scenario";
+import de from "./de.json";
 import en from "./en.json";
+import es from "./es.json";
+import fr from "./fr.json";
+import ja from "./ja.json";
+import ko from "./ko.json";
+import pl from "./pl.json";
+import pt from "./pt.json";
 import ru from "./ru.json";
+import tr from "./tr.json";
+import zh from "./zh.json";
 
 type Dictionary = typeof ru;
 
@@ -17,7 +26,7 @@ type LeafKeys<T, Prefix extends string = ""> = T extends string
 export type TKey = LeafKeys<Dictionary>;
 export type TParams = Record<string, string | number>;
 
-const dictionaries: Record<Language, Dictionary> = { ru, en };
+const dictionaries: Record<Language, Dictionary> = { ru, en, de, es, fr, pt, pl, tr, zh, ja, ko };
 
 function lookup(dictionary: Dictionary, key: string): string | undefined {
   let node: unknown = dictionary;
